@@ -17,10 +17,13 @@
 #include "dcrs.h"
 #include "arch.h"
 #include "cache_cluster.h"
-#include "local_mem.h"
+#include "shared_mem.h"
 #include "core.h"
 #include "socket.h"
 #include "constants.h"
+#include "raster_unit.h"
+#include "om_unit.h"
+#include "tex_unit.h"
 
 namespace vortex {
 
@@ -30,6 +33,9 @@ class Cluster : public SimObject<Cluster> {
 public:
   struct PerfStats {
     CacheSim::PerfStats l2cache;
+    CacheSim::PerfStats rcache;
+    CacheSim::PerfStats tcache;
+    CacheSim::PerfStats ocache;
   };
 
   SimPort<MemReq> mem_req_port;
@@ -70,6 +76,12 @@ private:
   ProcessorImpl*              processor_;
   std::vector<Socket::Ptr>    sockets_;  
   std::vector<CoreMask>       barriers_;
+  std::vector<RasterUnit::Ptr> raster_units_;
+  std::vector<TexUnit::Ptr>   tex_units_;
+  std::vector<OMUnit::Ptr>    om_units_;
+  CacheCluster::Ptr           tcaches_;
+  CacheCluster::Ptr           ocaches_;
+  CacheCluster::Ptr           rcaches_;
   CacheSim::Ptr               l2cache_;
   uint32_t                    cores_per_socket_;
 };

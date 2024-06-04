@@ -159,7 +159,29 @@ int dcr_initialize(vx_device_h hdevice) {
   RT_CHECK(vx_dcr_write(hdevice, VX_DCR_BASE_MPM_CLASS, 0), {
     return -1;
   });
-  
+
+  for (int i = 0; i < VX_DCR_RASTER_STATE_COUNT; ++i) {
+    RT_CHECK(vx_dcr_write(hdevice, VX_DCR_RASTER_STATE_BEGIN + i, 0), {
+      return -1;
+    });
+  }
+
+  for (int i = 0; i < VX_DCR_OM_STATE_COUNT; ++i) {
+    RT_CHECK(vx_dcr_write(hdevice, VX_DCR_OM_STATE_BEGIN + i, 0), {
+      return -1;
+    });
+  }
+
+  for (int i = 0; i < VX_TEX_STAGE_COUNT; ++i) {
+    RT_CHECK(vx_dcr_write(hdevice, VX_DCR_TEX_STAGE, i), {
+      return -1;
+    });
+    for (int j = 1; j < VX_DCR_TEX_STATE_COUNT; ++j) {
+      RT_CHECK(vx_dcr_write(hdevice, VX_DCR_TEX_STATE_BEGIN + j, 0), {
+        return -1;
+      });
+    }
+  }
   return 0;
 }
 
@@ -210,6 +232,9 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t scrb_sfu = 0;
   uint64_t scrb_wctl = 0;
   uint64_t scrb_csrs = 0;
+  uint64_t scrb_tex = 0;
+  uint64_t scrb_raster = 0;
+  uint64_t scrb_om = 0;
   uint64_t ifetches = 0;
   uint64_t loads = 0;
   uint64_t stores = 0;
@@ -233,6 +258,40 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mem_reads = 0;
   uint64_t mem_writes = 0;
   uint64_t mem_lat = 0;
+#ifdef EXT_TEX_ENABLE
+  // PERF: texunit
+  uint64_t tex_mem_reads = 0;
+  uint64_t tex_mem_lat = 0;
+  uint64_t tex_stall_cycles = 0;  
+  // PERF: tex tcache
+  uint64_t tcache_reads = 0; 
+  uint64_t tcache_read_misses = 0;
+  uint64_t tcache_bank_stalls = 0; 
+  uint64_t tcache_mshr_stalls = 0;
+#endif
+#ifdef EXT_RASTER_ENABLE
+  uint64_t raster_mem_reads = 0;
+  uint64_t raster_mem_lat = 0;
+  uint64_t raster_stall_cycles = 0;
+  // PERF: raster cache
+  uint64_t rcache_reads = 0;  
+  uint64_t rcache_read_misses = 0;
+  uint64_t rcache_bank_stalls = 0; 
+  uint64_t rcache_mshr_stalls = 0;
+#endif
+#ifdef EXT_OM_ENABLE
+  uint64_t om_mem_reads = 0;
+  uint64_t om_mem_writes = 0;
+  uint64_t om_mem_lat = 0;
+  uint64_t om_stall_cycles = 0;
+  // PERF: om ocache
+  uint64_t ocache_reads = 0;       
+  uint64_t ocache_writes = 0;      
+  uint64_t ocache_read_misses = 0; 
+  uint64_t ocache_write_misses = 0;
+  uint64_t ocache_bank_stalls = 0;   
+  uint64_t ocache_mshr_stalls = 0;
+#endif
 #endif
 
   uint64_t num_cores;
@@ -250,7 +309,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   bool dcache_enable  = isa_flags & VX_ISA_EXT_DCACHE;
   bool l2cache_enable = isa_flags & VX_ISA_EXT_L2CACHE;
   bool l3cache_enable = isa_flags & VX_ISA_EXT_L3CACHE;
-  bool lmem_enable    = isa_flags & VX_ISA_EXT_LMEM;
+  bool smem_enable    = isa_flags & VX_ISA_EXT_SMEM;
 #endif
 
   std::vector<uint8_t> staging_buf(64* sizeof(uint32_t));
@@ -321,17 +380,42 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
         uint64_t scrb_sfu_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_SFU);  
         uint64_t scrb_wctl_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_WCTL);
         uint64_t scrb_csrs_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_CSRS);
+        uint64_t scrb_tex_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_TEX);
+        uint64_t scrb_raster_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_RASTER);
+        uint64_t scrb_om_per_core = get_csr_64(staging_buf.data(), VX_CSR_MPM_SCRB_OM);
         if (num_cores > 1) {
-          uint64_t sfu_total = scrb_wctl_per_core + scrb_csrs_per_core;
-          fprintf(stream, "PERF: core%d: sfu stalls=%ld (scrs=%d%%, wctl=%d%%)\n"
+          uint64_t sfu_total = scrb_wctl_per_core + scrb_csrs_per_core + scrb_tex_per_core + scrb_raster_per_core + scrb_om_per_core;
+          fprintf(stream, "PERF: core%d: sfu stalls=%ld (scrs=%d%%, wctl=%d%%"     
+          #ifdef EXT_TEX_ENABLE
+            ", tex=%d%%"
+          #endif
+          #ifdef EXT_OM_ENABLE
+            ", om=%d%%"
+          #endif     
+          #ifdef EXT_RASTER_ENABLE
+            ", raster=%d%%"
+          #endif
+            ")\n"
             , core_id
             , scrb_sfu_per_core            
             , calcAvgPercent(scrb_csrs_per_core, sfu_total)
             , calcAvgPercent(scrb_wctl_per_core, sfu_total)
+          #ifdef EXT_TEX_ENABLE
+            , calcAvgPercent(scrb_tex_per_core, sfu_total)
+          #endif
+          #ifdef EXT_OM_ENABLE
+            , calcAvgPercent(scrb_om_per_core, sfu_total)
+          #endif
+          #ifdef EXT_RASTER_ENABLE
+            , calcAvgPercent(scrb_raster_per_core, sfu_total)
+          #endif
           );
         }
         scrb_wctl += scrb_wctl_per_core;
         scrb_csrs += scrb_csrs_per_core;
+        scrb_tex += scrb_tex_per_core;
+        scrb_raster += scrb_raster_per_core;
+        scrb_om += scrb_om_per_core;
       }
       // PERF: memory
       // ifetches
@@ -368,15 +452,15 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       }
     } break;
     case VX_DCR_MPM_CLASS_MEM: { 
-      if (lmem_enable) {
-        // PERF: lmem
-        uint64_t lmem_reads = get_csr_64(staging_buf.data(), VX_CSR_MPM_LMEM_READS);
-        uint64_t lmem_writes = get_csr_64(staging_buf.data(), VX_CSR_MPM_LMEM_WRITES);
-        uint64_t lmem_bank_stalls = get_csr_64(staging_buf.data(), VX_CSR_MPM_LMEM_BANK_ST);
-        int lmem_bank_utilization = calcAvgPercent(lmem_reads + lmem_writes, lmem_reads + lmem_writes + lmem_bank_stalls);
-        fprintf(stream, "PERF: core%d: lmem reads=%ld\n", core_id, lmem_reads);
-        fprintf(stream, "PERF: core%d: lmem writes=%ld\n", core_id, lmem_writes); 
-        fprintf(stream, "PERF: core%d: lmem bank stalls=%ld (utilization=%d%%)\n", core_id, lmem_bank_stalls, lmem_bank_utilization);
+      if (smem_enable) {
+        // PERF: smem
+        uint64_t smem_reads = get_csr_64(staging_buf.data(), VX_CSR_MPM_SMEM_READS);
+        uint64_t smem_writes = get_csr_64(staging_buf.data(), VX_CSR_MPM_SMEM_WRITES);
+        uint64_t smem_bank_stalls = get_csr_64(staging_buf.data(), VX_CSR_MPM_SMEM_BANK_ST);
+        int smem_bank_utilization = calcAvgPercent(smem_reads + smem_writes, smem_reads + smem_writes + smem_bank_stalls);
+        fprintf(stream, "PERF: core%d: smem reads=%ld\n", core_id, smem_reads);
+        fprintf(stream, "PERF: core%d: smem writes=%ld\n", core_id, smem_writes); 
+        fprintf(stream, "PERF: core%d: smem bank stalls=%ld (utilization=%d%%)\n", core_id, smem_bank_stalls, smem_bank_utilization);
       }
 
       if (icache_enable) {
@@ -438,6 +522,51 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
         mem_lat    = get_csr_64(staging_buf.data(), VX_CSR_MPM_MEM_LT);
       }
     } break;
+    case VX_DCR_MPM_CLASS_TEX: { 
+    #ifdef EXT_TEX_ENABLE
+      tex_mem_reads    += get_csr_64(staging_buf.data(), VX_CSR_MPM_TEX_READS);
+      tex_mem_lat      += get_csr_64(staging_buf.data(), VX_CSR_MPM_TEX_LAT);
+      tex_stall_cycles += get_csr_64(staging_buf.data(), VX_CSR_MPM_TEX_STALL);
+      if (0 == core_id) {
+        // cache perf counters
+        tcache_reads       = get_csr_64(staging_buf.data(), VX_CSR_MPM_TCACHE_READS);
+        tcache_read_misses = get_csr_64(staging_buf.data(), VX_CSR_MPM_TCACHE_MISS_R);
+        tcache_bank_stalls = get_csr_64(staging_buf.data(), VX_CSR_MPM_TCACHE_BANK_ST);
+        tcache_mshr_stalls = get_csr_64(staging_buf.data(), VX_CSR_MPM_TCACHE_MSHR_ST);
+      }
+    #endif
+    } break;
+    case VX_DCR_MPM_CLASS_RASTER: {
+    #ifdef EXT_RASTER_ENABLE
+      raster_mem_reads    += get_csr_64(staging_buf.data(), VX_CSR_MPM_RASTER_READS);
+      raster_mem_lat      += get_csr_64(staging_buf.data(), VX_CSR_MPM_RASTER_LAT);
+      raster_stall_cycles += get_csr_64(staging_buf.data(), VX_CSR_MPM_RASTER_STALL);
+      if (0 == core_id) {        
+        // cache perf counters
+        rcache_reads        = get_csr_64(staging_buf.data(), VX_CSR_MPM_RCACHE_READS);
+        rcache_read_misses  = get_csr_64(staging_buf.data(), VX_CSR_MPM_RCACHE_MISS_R);
+        rcache_bank_stalls  = get_csr_64(staging_buf.data(), VX_CSR_MPM_RCACHE_BANK_ST);
+        rcache_mshr_stalls  = get_csr_64(staging_buf.data(), VX_CSR_MPM_RCACHE_MSHR_ST);
+      }
+    #endif
+    } break;
+    case VX_DCR_MPM_CLASS_OM: {
+    #ifdef EXT_OM_ENABLE
+      om_mem_reads    += get_csr_64(staging_buf.data(), VX_CSR_MPM_OM_READS);
+      om_mem_writes   += get_csr_64(staging_buf.data(), VX_CSR_MPM_OM_WRITES);
+      om_mem_lat      += get_csr_64(staging_buf.data(), VX_CSR_MPM_OM_LAT);
+      om_stall_cycles += get_csr_64(staging_buf.data(), VX_CSR_MPM_OM_STALL);
+      if (0 == core_id) {        
+        // cache perf counters
+        ocache_reads        = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_READS);
+        ocache_writes       = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_WRITES);
+        ocache_read_misses  = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_MISS_R);
+        ocache_write_misses = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_MISS_W);
+        ocache_bank_stalls  = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_BANK_ST);
+        ocache_mshr_stalls  = get_csr_64(staging_buf.data(), VX_CSR_MPM_OCACHE_MSHR_ST);
+      }
+    #endif
+    } break;
     default:
       break;
     }
@@ -459,7 +588,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     int ifetch_avg_lat = (int)(double(ifetch_lat) / double(ifetches));
     int load_avg_lat = (int)(double(load_lat) / double(loads));
     uint64_t scrb_total = scrb_alu + scrb_fpu + scrb_lsu + scrb_sfu;
-    uint64_t sfu_total = scrb_wctl + scrb_csrs;
+    uint64_t sfu_total = scrb_wctl + scrb_csrs + scrb_tex + scrb_raster + scrb_om;
     fprintf(stream, "PERF: scheduler idle=%ld (%d%%)\n", sched_idles, sched_idles_percent);
     fprintf(stream, "PERF: scheduler stalls=%ld (%d%%)\n", sched_stalls, sched_stalls_percent);
     fprintf(stream, "PERF: ibuffer stalls=%ld (%d%%)\n", ibuffer_stalls, ibuffer_percent);
@@ -468,10 +597,29 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       calcAvgPercent(scrb_fpu, scrb_total),
       calcAvgPercent(scrb_lsu, scrb_total),
       calcAvgPercent(scrb_sfu, scrb_total));    
-    fprintf(stream, "PERF: sfu stalls=%ld (scrs=%d%%, wctl=%d%%)\n"
+    fprintf(stream, "PERF: sfu stalls=%ld (scrs=%d%%, wctl=%d%%"
+    #ifdef EXT_TEX_ENABLE
+      ", tex=%d%%"
+    #endif
+    #ifdef EXT_OM_ENABLE
+      ", om=%d%%"
+    #endif
+    #ifdef EXT_RASTER_ENABLE
+      ", raster=%d%%"
+    #endif
+      ")\n"
       , scrb_sfu      
       , calcAvgPercent(scrb_csrs, sfu_total)
       , calcAvgPercent(scrb_wctl, sfu_total)
+    #ifdef EXT_TEX_ENABLE
+      , calcAvgPercent(scrb_tex, sfu_total)     
+    #endif
+    #ifdef EXT_OM_ENABLE
+      , calcAvgPercent(scrb_om, sfu_total)
+    #endif
+    #ifdef EXT_RASTER_ENABLE
+      , calcAvgPercent(scrb_raster, sfu_total)
+    #endif
     );
     fprintf(stream, "PERF: ifetches=%ld\n", ifetches);
     fprintf(stream, "PERF: loads=%ld\n", loads);
@@ -515,6 +663,67 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     int mem_avg_lat = caclAverage(mem_lat, mem_reads);   
     fprintf(stream, "PERF: memory requests=%ld (reads=%ld, writes=%ld)\n", (mem_reads + mem_writes), mem_reads, mem_writes);
     fprintf(stream, "PERF: memory latency=%d cycles\n", mem_avg_lat);
+  } break;
+  case VX_DCR_MPM_CLASS_TEX: {
+  #ifdef EXT_TEX_ENABLE
+    tex_mem_reads /= num_cores;
+    tex_mem_lat /= num_cores;
+    tex_stall_cycles /= num_cores;
+    int tex_avg_lat = (int)(double(tex_mem_lat) / double(tex_mem_reads));
+    int tex_stall_cycles_ratio = (int)(100 * double(tex_stall_cycles) / total_cycles);
+    fprintf(stream, "PERF: tex memory reads=%ld\n", tex_mem_reads);
+    fprintf(stream, "PERF: tex memory latency=%d cycles\n", tex_avg_lat);
+    fprintf(stream, "PERF: tex stall cycles=%ld cycles (%d%%)\n", tex_stall_cycles, tex_stall_cycles_ratio);
+    int tcache_read_hit_ratio = (int)((1.0 - (double(tcache_read_misses) / double(tcache_reads))) * 100);
+    int tcache_bank_utilization = (int)((double(tcache_reads) / double(tcache_reads + tcache_bank_stalls)) * 100);
+    fprintf(stream, "PERF: tcache reads=%ld\n", tcache_reads);
+    fprintf(stream, "PERF: tcache read misses=%ld (hit ratio=%d%%)\n", tcache_read_misses, tcache_read_hit_ratio);
+    fprintf(stream, "PERF: tcache bank stalls=%ld (utilization=%d%%)\n", tcache_bank_stalls, tcache_bank_utilization);
+    fprintf(stream, "PERF: tcache mshr stalls=%ld\n", tcache_mshr_stalls);
+  #endif
+  } break;
+  case VX_DCR_MPM_CLASS_RASTER: {
+  #ifdef EXT_RASTER_ENABLE
+    raster_mem_reads /= num_cores;
+    raster_mem_lat /= num_cores;
+    raster_stall_cycles /= num_cores;
+    int raster_mem_avg_lat = (int)(double(raster_mem_lat) / double(raster_mem_reads));
+    int raster_stall_cycles_ratio = (int)(100 * double(raster_stall_cycles) / total_cycles);
+    fprintf(stream, "PERF: raster memory reads=%ld\n", raster_mem_reads);
+    fprintf(stream, "PERF: raster memory latency=%d cycles\n", raster_mem_avg_lat);
+    fprintf(stream, "PERF: raster stall cycles=%ld cycles (%d%%)\n", raster_stall_cycles, raster_stall_cycles_ratio);
+    // cache perf counters
+    int rcache_read_hit_ratio = (int)((1.0 - (double(rcache_read_misses) / double(rcache_reads))) * 100);
+    int rcache_bank_utilization = (int)((double(rcache_reads) / double(rcache_reads + rcache_bank_stalls)) * 100);
+    fprintf(stream, "PERF: rcache reads=%ld\n", rcache_reads);
+    fprintf(stream, "PERF: rcache read misses=%ld (hit ratio=%d%%)\n", rcache_read_misses, rcache_read_hit_ratio);
+    fprintf(stream, "PERF: rcache bank stalls=%ld (utilization=%d%%)\n", rcache_bank_stalls, rcache_bank_utilization);
+    fprintf(stream, "PERF: rcache mshr stalls=%ld\n", rcache_mshr_stalls);
+  #endif
+  } break;
+  case VX_DCR_MPM_CLASS_OM: {
+  #ifdef EXT_OM_ENABLE
+    om_mem_reads /= num_cores;
+    om_mem_writes /= num_cores;
+    om_mem_lat /= num_cores;
+    om_stall_cycles /= num_cores;
+    int om_mem_avg_lat = (int)(double(om_mem_lat) / double(om_mem_reads + om_mem_writes));
+    int om_stall_cycles_ratio = (int)(100 * double(om_stall_cycles) / total_cycles);
+    fprintf(stream, "PERF: om memory reads=%ld\n", om_mem_reads);
+    fprintf(stream, "PERF: om memory writes=%ld\n", om_mem_writes);
+    fprintf(stream, "PERF: om memory latency=%d cycles\n", om_mem_avg_lat);
+    fprintf(stream, "PERF: om stall cycles=%ld cycles (%d%%)\n", om_stall_cycles, om_stall_cycles_ratio);
+    // cache perf counters
+    int ocache_read_hit_ratio = (int)((1.0 - (double(ocache_read_misses) / double(ocache_reads))) * 100);
+    int ocache_write_hit_ratio = (int)((1.0 - (double(ocache_write_misses) / double(ocache_writes))) * 100);
+    int ocache_bank_utilization = (int)((double(ocache_reads + ocache_writes) / double(ocache_reads + ocache_writes + ocache_bank_stalls)) * 100);
+    fprintf(stream, "PERF: ocache reads=%ld\n", ocache_reads);
+    fprintf(stream, "PERF: ocache writes=%ld\n", ocache_writes);
+    fprintf(stream, "PERF: ocache read misses=%ld (hit ratio=%d%%)\n", ocache_read_misses, ocache_read_hit_ratio);
+    fprintf(stream, "PERF: ocache write misses=%ld (hit ratio=%d%%)\n", ocache_write_misses, ocache_write_hit_ratio);  
+    fprintf(stream, "PERF: ocache bank stalls=%ld (utilization=%d%%)\n", ocache_bank_stalls, ocache_bank_utilization);
+    fprintf(stream, "PERF: ocache mshr stalls=%ld\n", ocache_mshr_stalls);
+  #endif
   } break;
   default:
     break;

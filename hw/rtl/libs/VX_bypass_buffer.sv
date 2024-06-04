@@ -11,14 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// A bypass elastic buffer operates at full bandwidth where pop can happen if the buffer is empty but is going full
-// It has the following benefits:
-// + Full-bandwidth throughput
-// + use only one register for storage
-// It has the following limitations:
-// + data_out is not registered
-// + ready_in and ready_out are coupled
-
 `include "VX_platform.vh"
 
 `TRACING_OFF
@@ -43,26 +35,29 @@ module VX_bypass_buffer #(
         assign data_out  = data_in;
     end else begin
         reg [DATAW-1:0] buffer;
-        reg has_data;
+        reg buffer_valid;
 
         always @(posedge clk) begin
             if (reset) begin
-                has_data <= 0;
+                buffer_valid <= 0;
             end else begin            
                 if (ready_out) begin
-                    has_data <= 0;
-                end else if (~has_data) begin
-                    has_data <= valid_in;
+                    buffer_valid <= 0;
+                end
+                if (valid_in && ~ready_out) begin
+                    `ASSERT(!buffer_valid, ("runtime error"));
+                    buffer_valid <= 1;
                 end
             end
-            if (~has_data) begin
+
+            if (valid_in && ~ready_out) begin
                 buffer <= data_in;
             end
         end
 
-        assign ready_in  = ready_out || ~has_data;
-        assign data_out  = has_data ? buffer : data_in;
-        assign valid_out = valid_in || has_data;
+        assign ready_in  = ready_out || !buffer_valid;
+        assign data_out  = buffer_valid ? buffer : data_in;
+        assign valid_out = valid_in || buffer_valid;
     end
 
 endmodule

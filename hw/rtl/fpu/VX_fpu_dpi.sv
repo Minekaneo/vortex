@@ -18,7 +18,7 @@
 module VX_fpu_dpi import VX_fpu_pkg::*; #( 
     parameter NUM_LANES = 1,
     parameter TAGW      = 1,
-    parameter OUT_BUF   = 0
+    parameter OUT_REG   = 0
 ) (
     input wire clk,
     input wire reset,
@@ -445,7 +445,7 @@ module VX_fpu_dpi import VX_fpu_pkg::*; #(
         .NUM_INPUTS (2),
         .DATAW      (RSP_DATAW), 
         .ARBITER    ("R"),
-        .OUT_BUF    (0)
+        .OUT_REG    (0)
     ) div_sqrt_arb (
         .clk       (clk),
         .reset     (reset),
@@ -471,7 +471,7 @@ module VX_fpu_dpi import VX_fpu_pkg::*; #(
         .NUM_INPUTS (NUM_FPC),
         .DATAW      (RSP_DATAW), 
         .ARBITER    ("R"),
-        .OUT_BUF    (OUT_BUF)
+        .OUT_REG    (OUT_REG)
     ) rsp_arb (
         .clk       (clk),
         .reset     (reset),

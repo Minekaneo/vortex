@@ -21,7 +21,8 @@ module VX_stream_xbar #(
     parameter IN_WIDTH      = `LOG2UP(NUM_INPUTS),
     parameter OUT_WIDTH     = `LOG2UP(NUM_OUTPUTS),
     parameter ARBITER       = "P",
-    parameter OUT_BUF       = 0,
+    parameter LOCK_ENABLE   = 0,
+    parameter OUT_REG      = 0,
     parameter MAX_FANOUT    = `MAX_FANOUT,
     parameter PERF_CTR_BITS = `CLOG2(NUM_INPUTS+1)
 ) (
@@ -65,8 +66,9 @@ module VX_stream_xbar #(
                     .NUM_OUTPUTS (1),
                     .DATAW       (DATAW),
                     .ARBITER     (ARBITER),
+                    .LOCK_ENABLE (LOCK_ENABLE),
                     .MAX_FANOUT  (MAX_FANOUT),
-                    .OUT_BUF     (OUT_BUF)
+                    .OUT_REG     (OUT_REG)
                 ) xbar_arb (
                     .clk       (clk),
                     .reset     (slice_reset),
@@ -93,8 +95,9 @@ module VX_stream_xbar #(
                 .NUM_OUTPUTS (1),
                 .DATAW       (DATAW),
                 .ARBITER     (ARBITER),
+                .LOCK_ENABLE (LOCK_ENABLE),
                 .MAX_FANOUT  (MAX_FANOUT),
-                .OUT_BUF     (OUT_BUF)
+                .OUT_REG     (OUT_REG)
             ) xbar_arb (
                 .clk       (clk),
                 .reset     (reset),
@@ -129,8 +132,8 @@ module VX_stream_xbar #(
 
             VX_elastic_buffer #(
                 .DATAW   (DATAW),
-                .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
-                .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+                .SIZE    (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+                .OUT_REG (`OUT_REG_TO_EB_REG(OUT_REG))
             ) out_buf (
                 .clk       (clk),
                 .reset     (out_buf_reset),
@@ -151,8 +154,8 @@ module VX_stream_xbar #(
 
         VX_elastic_buffer #(
             .DATAW   (DATAW),
-            .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
-            .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+            .SIZE    (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+            .OUT_REG (`OUT_REG_TO_EB_REG(OUT_REG))
         ) out_buf (
             .clk       (clk),
             .reset     (reset),

@@ -65,8 +65,11 @@
 
 `define SFU_CSRS        0
 `define SFU_WCTL        1
+`define SFU_TEX         (`SFU_WCTL + `EXT_TEX_ENABLED)
+`define SFU_OM          (`SFU_TEX + `EXT_OM_ENABLED)
+`define SFU_RASTER      (`SFU_OM + `EXT_RASTER_ENABLED)
 
-`define NUM_SFU_UNITS   (2)
+`define NUM_SFU_UNITS   (2 + `EXT_TEX_ENABLED + `EXT_OM_ENABLED + `EXT_RASTER_ENABLED)
 `define SFU_BITS        `CLOG2(`NUM_SFU_UNITS)
 `define SFU_WIDTH       `UP(`SFU_BITS)
 
@@ -236,25 +239,47 @@
 `define INST_SFU_CSRRS       4'h7
 `define INST_SFU_CSRRC       4'h8
 `define INST_SFU_CMOV        4'h9
+`define INST_SFU_TEX         4'hA
+`define INST_SFU_OM          4'hB
+`define INST_SFU_RASTER      4'hC
 `define INST_SFU_BITS        4
 `define INST_SFU_CSR(f3)     (4'h6 + 4'(f3) - 4'h1)
 `define INST_SFU_IS_WCTL(op) (op <= 5)
 `define INST_SFU_IS_CSR(op)  (op >= 6 && op <= 8)
 
+////////////////////////// Texture Unit Definitions ///////////////////////////
+
+`define TEX_REQ_TAG_WIDTH       (`UUID_WIDTH + `LOG2UP(`TEX_REQ_QUEUE_SIZE))
+`define TEX_REQ_ARB1_TAG_WIDTH  (`TEX_REQ_TAG_WIDTH + `CLOG2(`SOCKET_SIZE))
+`define TEX_REQ_ARB2_TAG_WIDTH  (`TEX_REQ_ARB1_TAG_WIDTH + `ARB_SEL_BITS(`NUM_SOCKETS, `NUM_TEX_UNITS))
+
 ///////////////////////////////////////////////////////////////////////////////
 
-`define ARB_SEL_BITS(I, O)  ((I > O) ? `CLOG2((I + O - 1) / O) : 0)
+// non-cacheable tag bits
+`define NC_TAG_BITS             1
+
+// cache address type bits
+`ifdef SM_ENABLE
+`define CACHE_ADDR_TYPE_BITS    (`NC_TAG_BITS + 1)
+`else
+`define CACHE_ADDR_TYPE_BITS    `NC_TAG_BITS
+`endif
+
+`define ARB_SEL_BITS(I, O)      ((I > O) ? `CLOG2((I + O - 1) / O) : 0)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 `define CACHE_MEM_TAG_WIDTH(mshr_size, num_banks) \
-        (`CLOG2(mshr_size) + `CLOG2(num_banks))
+        (`CLOG2(mshr_size) + `CLOG2(num_banks) + `NC_TAG_BITS)
         
-`define CACHE_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width) \
+`define CACHE_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width) \
         (`CLOG2(num_reqs) + `CLOG2(line_size / word_size) + tag_width)
 
+`define CACHE_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width) \
+        (`CACHE_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width) + `NC_TAG_BITS)
+
 `define CACHE_NC_MEM_TAG_WIDTH(mshr_size, num_banks, num_reqs, line_size, word_size, tag_width) \
-        (`MAX(`CACHE_MEM_TAG_WIDTH(mshr_size, num_banks), `CACHE_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width)) + 1)
+        `MAX(`CACHE_MEM_TAG_WIDTH(mshr_size, num_banks), `CACHE_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width))
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -265,21 +290,29 @@
         (tag_width + `ARB_SEL_BITS(`UP(num_caches), 1))
 
 `define CACHE_CLUSTER_MEM_TAG_WIDTH(mshr_size, num_banks, num_caches) \
-        `CACHE_CLUSTER_MEM_ARB_TAG(`CACHE_MEM_TAG_WIDTH(mshr_size, num_banks), num_caches)
+        `CACHE_CLUSTER_MEM_ARB_TAG(`CACHE_MEM_TAG_WIDTH(mshr_size, num_banks),  num_caches)
 
-`define CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(num_reqs, line_size, word_size, tag_width, num_inputs, num_caches) \
-        `CACHE_CLUSTER_MEM_ARB_TAG(`CACHE_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, `CACHE_CLUSTER_CORE_ARB_TAG(tag_width, num_inputs, num_caches)), num_caches)
+`define CACHE_CLUSTER_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width, num_inputs, num_caches) \
+        `CACHE_CLUSTER_MEM_ARB_TAG((`CLOG2(num_reqs) + `CLOG2(line_size / word_size) + `CACHE_CLUSTER_CORE_ARB_TAG(tag_width, num_inputs, num_caches)), num_caches)
+
+`define CACHE_CLUSTER_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, tag_width, num_inputs, num_caches) \
+        `CACHE_CLUSTER_MEM_ARB_TAG((`CACHE_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, `CACHE_CLUSTER_CORE_ARB_TAG(tag_width, num_inputs, num_caches)) + `NC_TAG_BITS), num_caches)
 
 `define CACHE_CLUSTER_NC_MEM_TAG_WIDTH(mshr_size, num_banks, num_reqs, line_size, word_size, tag_width, num_inputs, num_caches) \
-        `CACHE_CLUSTER_MEM_ARB_TAG(`CACHE_NC_MEM_TAG_WIDTH(mshr_size, num_banks, num_reqs, line_size, word_size, `CACHE_CLUSTER_CORE_ARB_TAG(tag_width, num_inputs, num_caches)), num_caches)
+        `CACHE_CLUSTER_MEM_ARB_TAG(`MAX(`CACHE_MEM_TAG_WIDTH(mshr_size, num_banks), `CACHE_NC_BYPASS_TAG_WIDTH(num_reqs, line_size, word_size, `CACHE_CLUSTER_CORE_ARB_TAG(tag_width, num_inputs, num_caches))), num_caches)
 
 ///////////////////////////////////////////////////////////////////////////////
 
-`ifdef ICACHE_ENABLE
-`define L1_ENABLE
+`ifdef L2_ENABLE
+`define L2_LINE_SIZE	        `MEM_BLOCK_SIZE
+`else
+`define L2_LINE_SIZE	        `L1_LINE_SIZE
 `endif
-`ifdef DCACHE_ENABLE
-`define L1_ENABLE
+
+`ifdef L3_ENABLE
+`define L3_LINE_SIZE	        `MEM_BLOCK_SIZE
+`else
+`define L3_LINE_SIZE	        `L2_LINE_SIZE
 `endif
 
 `define VX_MEM_BYTEEN_WIDTH     `L3_LINE_SIZE   
@@ -342,6 +375,24 @@
     assign src.rsp_valid = dst.rsp_valid; \
     assign src.rsp_data.data = dst.rsp_data.data; \
     assign src.rsp_data.tag = dst.rsp_data.tag[TD-1 -: TS]; \
+    assign dst.rsp_ready = src.rsp_ready
+
+`define ASSIGN_VX_RASTER_BUS_IF(dst, src) \
+    assign dst.req_valid = src.req_valid; \
+    assign dst.req_data  = src.req_data; \
+    assign src.req_ready = dst.req_ready
+
+`define ASSIGN_VX_OM_BUS_IF(dst, src) \
+    assign dst.req_valid = src.req_valid; \
+    assign dst.req_data  = src.req_data; \
+    assign src.req_ready = dst.req_ready
+
+`define ASSIGN_VX_TEX_BUS_IF(dst, src) \
+    assign dst.req_valid = src.req_valid; \
+    assign dst.req_data  = src.req_data; \
+    assign src.req_ready = dst.req_ready; \
+    assign src.rsp_valid = dst.rsp_valid; \
+    assign src.rsp_data  = dst.rsp_data; \
     assign dst.rsp_ready = src.rsp_ready
 
 `define BUFFER_DCR_BUS_IF(dst, src, enable) \

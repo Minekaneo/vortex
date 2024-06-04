@@ -4,7 +4,7 @@ BUILD_DIR=$(PREFIX)_$(DEVICE_FAMILY)
 
 IP_CACHE_DIR=../ip_cache/$(DEVICE_FAMILY)
 
-.PHONY: dogfood unittest pipeline lmem cache fpu core vortex top test
+.PHONY: dogfood unittest pipeline smem cache fpu tex raster om core vortex top test
 
 ip-gen: $(IP_CACHE_DIR)/ip_gen.log
 $(IP_CACHE_DIR)/ip_gen.log:
@@ -25,10 +25,10 @@ pipeline:
 	cp pipeline/Makefile pipeline/$(BUILD_DIR)
 	$(MAKE) -C pipeline/$(BUILD_DIR) clean && $(MAKE) -C pipeline/$(BUILD_DIR) > pipeline/$(BUILD_DIR)/build.log 2>&1 &
 
-lmem:
-	mkdir -p lmem/$(BUILD_DIR)
-	cp lmem/Makefile lmem/$(BUILD_DIR)
-	$(MAKE) -C lmem/$(BUILD_DIR) clean && $(MAKE) -C lmem/$(BUILD_DIR) > lmem/$(BUILD_DIR)/build.log 2>&1 &
+smem:
+	mkdir -p smem/$(BUILD_DIR)
+	cp smem/Makefile smem/$(BUILD_DIR)
+	$(MAKE) -C smem/$(BUILD_DIR) clean && $(MAKE) -C smem/$(BUILD_DIR) > smem/$(BUILD_DIR)/build.log 2>&1 &
 
 cache:
 	mkdir -p cache/$(BUILD_DIR)
@@ -39,6 +39,21 @@ fpu: ip-gen
 	mkdir -p fpu/$(BUILD_DIR)
 	cp fpu/Makefile fpu/$(BUILD_DIR)
 	$(MAKE) -C fpu/$(BUILD_DIR) clean && $(MAKE) -C fpu/$(BUILD_DIR) > fpu/$(BUILD_DIR)/build.log 2>&1 &
+
+tex:
+	mkdir -p tex/$(BUILD_DIR)
+	cp tex/Makefile tex/$(BUILD_DIR)
+	$(MAKE) -C tex/$(BUILD_DIR) clean && $(MAKE) -C tex/$(BUILD_DIR) > tex/$(BUILD_DIR)/build.log 2>&1 &
+
+om:
+	mkdir -p om/$(BUILD_DIR)
+	cp om/Makefile om/$(BUILD_DIR)
+	$(MAKE) -C om/$(BUILD_DIR) clean && $(MAKE) -C om/$(BUILD_DIR) > om/$(BUILD_DIR)/build.log 2>&1 &
+
+raster:
+	mkdir -p raster/$(BUILD_DIR)
+	cp raster/Makefile raster/$(BUILD_DIR)
+	$(MAKE) -C raster/$(BUILD_DIR) clean && $(MAKE) -C raster/$(BUILD_DIR) > raster/$(BUILD_DIR)/build.log 2>&1 &
 
 core:
 	mkdir -p core/$(BUILD_DIR)

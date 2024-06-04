@@ -42,33 +42,34 @@ module VX_elastic_buffer #(
 
     end else if (SIZE == 1) begin
 
-        VX_pipe_buffer #(
-            .DATAW (DATAW)
-        ) pipe_buffer (
-            .clk       (clk),
-            .reset     (reset),
-            .valid_in  (valid_in),
-            .data_in   (data_in),
-            .ready_in  (ready_in),
-            .valid_out (valid_out),
-            .data_out  (data_out),
-            .ready_out (ready_out)
+        wire stall = valid_out && ~ready_out;
+
+        VX_pipe_register #(
+            .DATAW	(1 + DATAW),
+            .RESETW (1)
+        ) pipe_register (
+            .clk      (clk),
+            .reset    (reset),
+            .enable	  (~stall),
+            .data_in  ({valid_in,  data_in}),
+            .data_out ({valid_out, data_out})
         );
+
+        assign ready_in = ~stall;
 
     end else if (SIZE == 2) begin
 
         VX_skid_buffer #(
             .DATAW   (DATAW),
-            .HALF_BW (OUT_REG == 2),
             .OUT_REG (OUT_REG)
         ) skid_buffer (
             .clk       (clk),
             .reset     (reset),
-            .valid_in  (valid_in),
-            .data_in   (data_in),
+            .valid_in  (valid_in),                    
             .ready_in  (ready_in),
-            .valid_out (valid_out),
+            .data_in   (data_in),          
             .data_out  (data_out),
+            .valid_out (valid_out),
             .ready_out (ready_out)
         );
     
@@ -110,10 +111,10 @@ module VX_elastic_buffer #(
             .clk       (clk),
             .reset     (reset),
             .valid_in  (~empty),
+            .ready_in  (ready_out_t),
             .data_in   (data_out_t),
-            .ready_in  (ready_out_t),            
+            .data_out  (data_out),
             .valid_out (valid_out),
-            .data_out  (data_out),            
             .ready_out (ready_out)
         );
 

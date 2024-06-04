@@ -112,7 +112,7 @@ void LsuUnit::tick() {
 
     // handle dcache response    
     for (uint32_t t = 0; t < num_lanes_; ++t) {
-        auto& dcache_rsp_port = core_->lmem_demuxs_.at(t)->RspIn;
+        auto& dcache_rsp_port = core_->smem_demuxs_.at(t)->RspIn;
         if (dcache_rsp_port.empty())
             continue;
         auto& mem_rsp = dcache_rsp_port.front();
@@ -132,15 +132,15 @@ void LsuUnit::tick() {
         --pending_loads_;
     }
 
-    // handle local memory response
+    // handle shared memory response
     for (uint32_t t = 0; t < num_lanes_; ++t) {
-        auto& lmem_rsp_port = core_->local_mem_->Outputs.at(t);
-        if (lmem_rsp_port.empty())
+        auto& smem_rsp_port = core_->shared_mem_->Outputs.at(t);
+        if (smem_rsp_port.empty())
             continue;
-        auto& mem_rsp = lmem_rsp_port.front();
+        auto& mem_rsp = smem_rsp_port.front();
         auto& entry = pending_rd_reqs_.at(mem_rsp.tag);          
         auto trace = entry.trace;
-        DT(3, "lmem-rsp: tag=" << mem_rsp.tag << ", type=" << trace->lsu_type << ", tid=" << t << ", " << *trace);
+        DT(3, "smem-rsp: tag=" << mem_rsp.tag << ", type=" << trace->lsu_type << ", tid=" << t << ", " << *trace);
         assert(entry.count);
         --entry.count; // track remaining addresses 
         if (0 == entry.count) {
@@ -149,7 +149,7 @@ void LsuUnit::tick() {
             output.send(trace, 1);
             pending_rd_reqs_.release(mem_rsp.tag);
         } 
-        lmem_rsp_port.pop();  
+        smem_rsp_port.pop();  
         --pending_loads_;
     }
 
@@ -207,7 +207,7 @@ void LsuUnit::tick() {
             for (uint32_t t = 1; t < num_lanes_; ++t) {
                 if (!trace->tmask.test(t0 + t))
                     continue;
-                auto mem_addr = trace_data->mem_addrs.at(t + t0).addr & ~addr_mask;
+                auto mem_addr = trace_data->mem_addrs.at(t).addr & ~addr_mask;
                 matches += (addr0 == mem_addr);
             }
         #ifdef LSU_DUP_ENABLE
@@ -228,8 +228,8 @@ void LsuUnit::tick() {
             if (!trace->tmask.test(t0 + t))
                 continue;
             
-            auto& dcache_req_port = core_->lmem_demuxs_.at(t)->ReqIn;
-            auto mem_addr = trace_data->mem_addrs.at(t + t0);
+            auto& dcache_req_port = core_->smem_demuxs_.at(t)->ReqIn;
+            auto mem_addr = trace_data->mem_addrs.at(t);
             auto type = core_->get_addr_type(mem_addr.addr);
 
             MemReq mem_req;
@@ -272,13 +272,39 @@ void LsuUnit::tick() {
 
 SfuUnit::SfuUnit(const SimContext& ctx, Core* core) 
     : ExeUnit(ctx, core, "SFU")
+    , raster_units_(core->raster_units_)
+    , tex_units_(core->tex_units_)
+    , om_units_(core->om_units_)
     , input_idx_(0)
-{}
+{
+    for (auto& raster_unit : raster_units_) {
+        pending_rsps_.push_back(&raster_unit->Output);
+    }
+    for (auto& tex_unit : tex_units_) {
+        pending_rsps_.push_back(&tex_unit->Output);
+    }
+    for (auto& om_unit : om_units_) {
+        pending_rsps_.push_back(&om_unit->Output);
+    }
+}
     
 void SfuUnit::tick() {
+    // handle pending responses
+    for (auto pending_rsp : pending_rsps_) {
+        if (pending_rsp->empty())
+            continue;
+        auto trace = pending_rsp->front();
+        if (trace->cid != core_->id())
+            continue;
+        int iw = trace->wid % ISSUE_WIDTH;
+        auto& output = Outputs.at(iw);
+        output.send(trace, 1);
+        pending_rsp->pop();
+    }
+
     // check input queue
     for (uint32_t i = 0; i < ISSUE_WIDTH; ++i) {
-        int iw = (input_idx_ + i) % ISSUE_WIDTH;        
+        int iw = (input_idx_ + i) % ISSUE_WIDTH;
         auto& input = Inputs.at(iw);
         if (input.empty())
             continue;
@@ -305,6 +331,18 @@ void SfuUnit::tick() {
                 core_->barrier(trace_data->bar.id, trace_data->bar.count, trace->wid);
             }
             release_warp = false;
+        }   break;
+        case SfuType::RASTER: {
+            auto trace_data = std::dynamic_pointer_cast<RasterUnit::TraceData>(trace->data);
+            raster_units_.at(trace_data->raster_idx)->Input.send(trace, 1);
+        }   break;
+        case SfuType::OM: {
+            auto trace_data = std::dynamic_pointer_cast<OMUnit::TraceData>(trace->data);
+            om_units_.at(trace_data->om_idx)->Input.send(trace, 1);
+        }   break;    
+        case SfuType::TEX: {
+            auto trace_data = std::dynamic_pointer_cast<TexUnit::TraceData>(trace->data);
+            tex_units_.at(trace_data->tex_idx)->Input.send(trace, 1);
         }   break;
         case SfuType::CMOV:
             output.send(trace, 3);

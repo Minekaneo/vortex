@@ -21,23 +21,22 @@ module VX_generic_arbiter #(
     parameter LOG_NUM_REQS = `LOG2UP(NUM_REQS)
 ) (
     input  wire                     clk,
-    input  wire                     reset,    
+    input  wire                     reset,
+    input  wire                     unlock,
     input  wire [NUM_REQS-1:0]      requests,
     output wire [LOG_NUM_REQS-1:0]  grant_index,
     output wire [NUM_REQS-1:0]      grant_onehot,   
-    output wire                     grant_valid,
-    input  wire                     grant_unlock
+    output wire                     grant_valid
 );
     if (TYPE == "P") begin
 
-        `UNUSED_PARAM (LOCK_ENABLE)
-        `UNUSED_VAR (clk)
-        `UNUSED_VAR (reset)
-        `UNUSED_VAR (grant_unlock)
-
         VX_priority_arbiter #(
-            .NUM_REQS (NUM_REQS)
+            .NUM_REQS    (NUM_REQS),
+            .LOCK_ENABLE (LOCK_ENABLE)
         ) priority_arbiter (
+            .clk          (clk),
+            .reset        (reset),
+            .unlock       (unlock),
             .requests     (requests),              
             .grant_valid  (grant_valid),
             .grant_index  (grant_index),
@@ -51,12 +50,12 @@ module VX_generic_arbiter #(
             .LOCK_ENABLE (LOCK_ENABLE)
         ) rr_arbiter (
             .clk          (clk),
-            .reset        (reset),            
+            .reset        (reset),
+            .unlock       (unlock),
             .requests     (requests),  
             .grant_valid  (grant_valid),
             .grant_index  (grant_index),
-            .grant_onehot (grant_onehot),
-            .grant_unlock (grant_unlock)
+            .grant_onehot (grant_onehot)
         );
 
     end else if (TYPE == "F") begin
@@ -67,11 +66,11 @@ module VX_generic_arbiter #(
         ) fair_arbiter (
             .clk          (clk),
             .reset        (reset),
+            .unlock       (unlock),
             .requests     (requests),   
             .grant_valid  (grant_valid),
             .grant_index  (grant_index),
-            .grant_onehot (grant_onehot),
-            .grant_unlock (grant_unlock)
+            .grant_onehot (grant_onehot)
         );
 
     end else if (TYPE == "M") begin
@@ -82,11 +81,11 @@ module VX_generic_arbiter #(
         ) matrix_arbiter (
             .clk          (clk),
             .reset        (reset),
+            .unlock       (unlock),
             .requests     (requests), 
             .grant_valid  (grant_valid),
             .grant_index  (grant_index),
-            .grant_onehot (grant_onehot),
-            .grant_unlock (grant_unlock)
+            .grant_onehot (grant_onehot)
         );
 
     end else if (TYPE == "C") begin
@@ -97,11 +96,11 @@ module VX_generic_arbiter #(
         ) cyclic_arbiter (
             .clk          (clk),
             .reset        (reset),
+            .unlock       (unlock),
             .requests     (requests), 
             .grant_valid  (grant_valid),
             .grant_index  (grant_index),
-            .grant_onehot (grant_onehot),
-            .grant_unlock (grant_unlock)
+            .grant_onehot (grant_onehot)
         );
 
     end else begin

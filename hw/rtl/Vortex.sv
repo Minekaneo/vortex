@@ -13,6 +13,18 @@
 
 `include "VX_define.vh"
 
+`ifdef EXT_TEX_ENABLE
+`include "VX_tex_define.vh"
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+`include "VX_raster_define.vh"
+`endif
+
+`ifdef EXT_OM_ENABLE
+`include "VX_om_define.vh"
+`endif
+
 module Vortex import VX_gpu_pkg::*; (
     `SCOPE_IO_DECL
 
@@ -49,6 +61,16 @@ module Vortex import VX_gpu_pkg::*; (
     assign mem_perf_if.icache  = 'x;
     assign mem_perf_if.dcache  = 'x;
     assign mem_perf_if.l2cache = 'x;
+`ifdef EXT_TEX_ENABLE
+    assign mem_perf_if.tcache  = 'x;
+`endif
+`ifdef EXT_RASTER_ENABLE
+    assign mem_perf_if.rcache  = 'x;
+`endif
+`ifdef EXT_OM_ENABLE
+    assign mem_perf_if.ocache  = 'x;
+`endif
+    assign mem_perf_if.smem    = 'x;
 `endif
 
     VX_mem_bus_if #(
@@ -78,8 +100,8 @@ module Vortex import VX_gpu_pkg::*; (
         .TAG_WIDTH      (L2_MEM_TAG_WIDTH),
         .WRITE_ENABLE   (1),
         .UUID_WIDTH     (`UUID_WIDTH),  
-        .CORE_OUT_BUF   (2),
-        .MEM_OUT_BUF    (2),
+        .CORE_OUT_REG   (2),
+        .MEM_OUT_REG    (2),
         .NC_ENABLE      (1),
         .PASSTHRU       (!`L3_ENABLED)
     ) l3cache (

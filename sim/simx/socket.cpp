@@ -20,7 +20,10 @@ Socket::Socket(const SimContext& ctx,
                 uint32_t socket_id,
                 Cluster* cluster, 
                 const Arch &arch, 
-                const DCRS &dcrs) 
+                const DCRS &dcrs,
+                const std::vector<RasterUnit::Ptr>& raster_units,
+                const std::vector<TexUnit::Ptr>& tex_units,
+                const std::vector<OMUnit::Ptr>& om_units) 
   : SimObject(ctx, "socket")
   , icache_mem_req_port(this)
   , icache_mem_rsp_port(this)
@@ -44,7 +47,7 @@ Socket::Socket(const SimContext& ctx,
     XLEN,                   // address bits
     1,                      // number of ports
     1,                      // number of inputs
-    false,                  // write-through
+    true,                   // write-through
     false,                  // write response
     (uint8_t)arch.num_warps(), // mshr
     2,                      // pipeline latency
@@ -80,7 +83,10 @@ Socket::Socket(const SimContext& ctx,
     cores_.at(i) = Core::Create(core_id, 
                                 this, 
                                 arch, 
-                                dcrs);
+                                dcrs, 
+                                raster_units, 
+                                tex_units, 
+                                om_units);
 
     cores_.at(i)->icache_req_ports.at(0).bind(&icaches_->CoreReqPorts.at(i).at(0));
     icaches_->CoreRspPorts.at(i).at(0).bind(&cores_.at(i)->icache_rsp_ports.at(0));      

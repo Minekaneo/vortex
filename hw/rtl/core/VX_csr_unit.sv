@@ -26,6 +26,25 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
     VX_mem_perf_if.slave        mem_perf_if,
     VX_pipeline_perf_if.slave   pipeline_perf_if,
 `endif
+
+`ifdef EXT_TEX_ENABLE
+    VX_sfu_csr_if.master        tex_csr_if,
+`ifdef PERF_ENABLE
+    VX_tex_perf_if.slave        perf_tex_if,
+`endif
+`endif
+`ifdef EXT_RASTER_ENABLE
+    VX_sfu_csr_if.master        raster_csr_if,
+`ifdef PERF_ENABLE
+    VX_raster_perf_if.slave     perf_raster_if,
+`endif
+`endif
+`ifdef EXT_OM_ENABLE
+    VX_sfu_csr_if.master        om_csr_if,
+`ifdef PERF_ENABLE
+    VX_om_perf_if.slave         perf_om_if,
+`endif
+`endif
     
 `ifdef EXT_F_ENABLE
     VX_fpu_to_csr_if.slave      fpu_to_csr_if [`NUM_FPU_BLOCKS],
@@ -69,6 +88,68 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
 
     wire csr_write_enable = (execute_if.data.op_type == `INST_SFU_CSRRW);
 
+`ifdef EXT_TEX_ENABLE
+
+    wire tex_addr_enable = (csr_addr >= `VX_CSR_TEX_BEGIN && csr_addr < `VX_CSR_TEX_END);
+
+    assign tex_csr_if.read_enable = csr_req_valid && ~csr_write_enable && tex_addr_enable;
+    assign tex_csr_if.read_uuid   = execute_if.data.uuid;
+    assign tex_csr_if.read_pid    = execute_if.data.pid;
+    assign tex_csr_if.read_wid    = execute_if.data.wid;
+    assign tex_csr_if.read_tmask  = execute_if.data.tmask;
+    assign tex_csr_if.read_addr   = csr_addr;
+    `UNUSED_VAR (tex_csr_if.read_data)
+    
+    assign tex_csr_if.write_enable = csr_req_valid && csr_write_enable && tex_addr_enable;
+    assign tex_csr_if.write_uuid   = execute_if.data.uuid;
+    assign tex_csr_if.write_pid    = execute_if.data.pid;
+    assign tex_csr_if.write_wid    = execute_if.data.wid;
+    assign tex_csr_if.write_tmask  = execute_if.data.tmask;
+    assign tex_csr_if.write_addr   = csr_addr;
+    assign tex_csr_if.write_data   = rs1_data;
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+
+    wire raster_addr_enable = (csr_addr >= `VX_CSR_RASTER_BEGIN && csr_addr < `VX_CSR_RASTER_END);
+    
+    assign raster_csr_if.read_enable = csr_req_valid && ~csr_write_enable && raster_addr_enable;
+    assign raster_csr_if.read_uuid   = execute_if.data.uuid;
+    assign raster_csr_if.read_pid    = execute_if.data.pid;
+    assign raster_csr_if.read_wid    = execute_if.data.wid;
+    assign raster_csr_if.read_tmask  = execute_if.data.tmask;
+    assign raster_csr_if.read_addr   = csr_addr;
+    
+    assign raster_csr_if.write_enable= csr_req_valid && csr_write_enable && raster_addr_enable;
+    assign raster_csr_if.write_uuid  = execute_if.data.uuid;
+    assign raster_csr_if.write_pid   = execute_if.data.pid;
+    assign raster_csr_if.write_wid   = execute_if.data.wid;
+    assign raster_csr_if.write_tmask = execute_if.data.tmask;
+    assign raster_csr_if.write_addr  = csr_addr;
+    assign raster_csr_if.write_data  = rs1_data;
+`endif
+
+`ifdef EXT_OM_ENABLE
+
+    wire om_addr_enable = (csr_addr >= `VX_CSR_OM_BEGIN && csr_addr < `VX_CSR_OM_END);
+
+    assign om_csr_if.read_enable  = csr_req_valid && ~csr_write_enable && om_addr_enable;
+    assign om_csr_if.read_uuid    = execute_if.data.uuid;
+    assign om_csr_if.read_pid     = execute_if.data.pid;
+    assign om_csr_if.read_wid     = execute_if.data.wid;
+    assign om_csr_if.read_tmask   = execute_if.data.tmask;
+    assign om_csr_if.read_addr    = csr_addr;
+    `UNUSED_VAR (om_csr_if.read_data)
+    
+    assign om_csr_if.write_enable = csr_req_valid && csr_write_enable && om_addr_enable; 
+    assign om_csr_if.write_uuid   = execute_if.data.uuid;
+    assign om_csr_if.write_pid    = execute_if.data.pid;
+    assign om_csr_if.write_wid    = execute_if.data.wid;
+    assign om_csr_if.write_tmask  = execute_if.data.tmask;
+    assign om_csr_if.write_addr   = csr_addr;
+    assign om_csr_if.write_data   = rs1_data;
+`endif
+
     VX_csr_data #(
         .CORE_ID (CORE_ID)
     ) csr_data (
@@ -80,6 +161,15 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .mem_perf_if    (mem_perf_if),
         .pipeline_perf_if(pipeline_perf_if),
+    `ifdef EXT_TEX_ENABLE        
+        .perf_tex_if    (perf_tex_if),
+    `endif    
+    `ifdef EXT_RASTER_ENABLE        
+        .perf_raster_if (perf_raster_if),
+    `endif
+    `ifdef EXT_OM_ENABLE
+        .perf_om_if     (perf_om_if),
+    `endif
     `endif
 
         .commit_csr_if  (commit_csr_if),
@@ -120,6 +210,11 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
 
     always @(*) begin
         csr_rd_enable = 0;
+    `ifdef EXT_RASTER_ENABLE
+        if (raster_addr_enable) begin
+            csr_read_data = raster_csr_if.read_data;
+        end else
+    `endif
         case (csr_addr)
         `VX_CSR_THREAD_ID : csr_read_data = wtid;
         `VX_CSR_MHARTID   : csr_read_data = gtid;
@@ -134,7 +229,11 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
 
     assign csr_req_data = execute_if.data.use_imm ? 32'(csr_imm) : rs1_data[0];
 
-    assign csr_wr_enable = (csr_write_enable || (| csr_req_data));
+    assign csr_wr_enable = (csr_write_enable || (| csr_req_data))
+                `ifdef EXT_OM_ENABLE
+                    && !om_addr_enable
+                `endif    
+                    ;
 
     always @(*) begin
         case (execute_if.data.op_type)

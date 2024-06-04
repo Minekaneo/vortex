@@ -30,12 +30,15 @@
 #include "warp.h"
 #include "pipeline.h"
 #include "cache_sim.h"
-#include "local_mem.h"
+#include "shared_mem.h"
 #include "ibuffer.h"
 #include "scoreboard.h"
 #include "operand.h"
 #include "dispatcher.h"
 #include "exe_unit.h"
+#include "tex_unit.h"
+#include "raster_unit.h"
+#include "om_unit.h"
 #include "dcrs.h"
 
 namespace vortex {
@@ -59,6 +62,9 @@ public:
     uint64_t scrb_sfu;
     uint64_t scrb_wctl;
     uint64_t scrb_csrs;
+    uint64_t scrb_tex;
+    uint64_t scrb_om;
+    uint64_t scrb_raster;
     uint64_t ifetches;
     uint64_t loads;
     uint64_t stores;
@@ -78,6 +84,9 @@ public:
       , scrb_sfu(0)
       , scrb_wctl(0)
       , scrb_csrs(0)
+      , scrb_tex(0)
+      , scrb_om(0)
+      , scrb_raster(0)
       , ifetches(0)
       , loads(0)
       , stores(0)
@@ -96,7 +105,10 @@ public:
        uint32_t core_id, 
        Socket* socket,
        const Arch &arch, 
-       const DCRS &dcrs);
+       const DCRS &dcrs,
+       const std::vector<RasterUnit::Ptr>& raster_units,
+       const std::vector<TexUnit::Ptr>& tex_units,
+       const std::vector<OMUnit::Ptr>& om_units);
 
   ~Core();
 
@@ -152,6 +164,12 @@ public:
 
   bool check_exit(Word* exitcode, bool riscv_test) const;
 
+  uint32_t raster_idx();
+
+  uint32_t om_idx();
+
+  uint32_t tex_idx();
+
 private:
 
   void schedule();
@@ -181,8 +199,11 @@ private:
   std::vector<Operand::Ptr> operands_;
   std::vector<Dispatcher::Ptr> dispatchers_;
   std::vector<ExeUnit::Ptr> exe_units_;
-  LocalMem::Ptr local_mem_;
-  std::vector<LocalMemDemux::Ptr> lmem_demuxs_;
+  SharedMem::Ptr shared_mem_;
+  std::vector<SMemDemux::Ptr> smem_demuxs_;
+  std::vector<RasterUnit::Ptr> raster_units_;  
+  std::vector<TexUnit::Ptr> tex_units_;
+  std::vector<OMUnit::Ptr> om_units_;
 
   PipelineLatch fetch_latch_;
   PipelineLatch decode_latch_;
@@ -206,6 +227,10 @@ private:
 
   uint32_t commit_exe_;
   uint32_t ibuffer_idx_;
+
+  uint32_t raster_idx_;  
+  uint32_t tex_idx_;
+  uint32_t om_idx_;
 
   friend class Warp;
   friend class LsuUnit;

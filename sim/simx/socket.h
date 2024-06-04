@@ -17,7 +17,7 @@
 #include "dcrs.h"
 #include "arch.h"
 #include "cache_cluster.h"
-#include "local_mem.h"
+#include "shared_mem.h"
 #include "core.h"
 #include "constants.h"
 
@@ -42,7 +42,10 @@ public:
          uint32_t socket_id,
          Cluster* cluster, 
          const Arch &arch, 
-         const DCRS &dcrs);
+         const DCRS &dcrs,
+         const std::vector<RasterUnit::Ptr>& raster_units,
+         const std::vector<TexUnit::Ptr>& tex_units,
+         const std::vector<OMUnit::Ptr>& om_units);
 
   ~Socket();
 

@@ -19,8 +19,9 @@ module VX_stream_arb #(
     parameter NUM_OUTPUTS   = 1,
     parameter DATAW         = 1,
     parameter `STRING ARBITER = "P",
+    parameter LOCK_ENABLE   = 1,
     parameter MAX_FANOUT    = `MAX_FANOUT,
-    parameter OUT_BUF       = 0 ,
+    parameter OUT_REG       = 0 ,
     parameter NUM_REQS      = (NUM_INPUTS + NUM_OUTPUTS - 1) / NUM_OUTPUTS,
     parameter LOG_NUM_REQS  = `CLOG2(NUM_REQS),
     parameter NUM_REQS_W    = `UP(LOG_NUM_REQS)
@@ -56,8 +57,9 @@ module VX_stream_arb #(
                     .NUM_OUTPUTS (1),
                     .DATAW       (DATAW),
                     .ARBITER     (ARBITER),
+                    .LOCK_ENABLE (LOCK_ENABLE),
                     .MAX_FANOUT  (MAX_FANOUT),
-                    .OUT_BUF     (OUT_BUF)
+                    .OUT_REG     (OUT_REG)
                 ) arb_slice (
                     .clk       (clk),
                     .reset     (slice_reset),
@@ -100,8 +102,9 @@ module VX_stream_arb #(
                         .NUM_OUTPUTS (1),   
                         .DATAW       (DATAW),
                         .ARBITER     (ARBITER),
+                        .LOCK_ENABLE (LOCK_ENABLE),
                         .MAX_FANOUT  (MAX_FANOUT),
-                        .OUT_BUF     (OUT_BUF)
+                        .OUT_REG     (OUT_REG)
                     ) fanout_slice_arb (
                         .clk       (clk),
                         .reset     (slice_reset),
@@ -126,8 +129,9 @@ module VX_stream_arb #(
                 .NUM_OUTPUTS (1),   
                 .DATAW       (DATAW + LOG_NUM_REQS2),
                 .ARBITER     (ARBITER),
+                .LOCK_ENABLE (LOCK_ENABLE),
                 .MAX_FANOUT  (MAX_FANOUT),
-                .OUT_BUF     (OUT_BUF)
+                .OUT_REG     (OUT_REG)
             ) fanout_join_arb (
                 .clk       (clk),
                 .reset     (reset),
@@ -154,25 +158,25 @@ module VX_stream_arb #(
             wire                    arb_valid;
             wire [NUM_REQS_W-1:0]   arb_index;
             wire [NUM_REQS-1:0]     arb_onehot;
-            wire                    arb_ready;
+            wire                    arb_unlock;
 
             VX_generic_arbiter #(
                 .NUM_REQS    (NUM_REQS),
-                .LOCK_ENABLE (1),
+                .LOCK_ENABLE (LOCK_ENABLE),
                 .TYPE        (ARBITER)
             ) arbiter (
                 .clk          (clk),
                 .reset        (reset),
                 .requests     (valid_in),
+                .unlock       (arb_unlock),
                 .grant_valid  (arb_valid),
                 .grant_index  (arb_index),
-                .grant_onehot (arb_onehot),
-                .grant_unlock (arb_ready)
+                .grant_onehot (arb_onehot)
             );
 
             assign valid_in_r = arb_valid;
             assign data_in_r  = data_in[arb_index];
-            assign arb_ready  = ready_in_r;
+            assign arb_unlock = | (valid_in_r & ready_in_r);
 
             for (genvar i = 0; i < NUM_REQS; ++i) begin
                 assign ready_in[i] = ready_in_r & arb_onehot[i];
@@ -180,8 +184,8 @@ module VX_stream_arb #(
 
             VX_elastic_buffer #(
                 .DATAW   (LOG_NUM_REQS + DATAW),
-                .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
-                .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+                .SIZE    (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+                .OUT_REG (`OUT_REG_TO_EB_REG(OUT_REG))
             ) out_buf (
                 .clk       (clk),
                 .reset     (reset),
@@ -213,8 +217,9 @@ module VX_stream_arb #(
                     .NUM_OUTPUTS (BATCH_SIZE),
                     .DATAW       (DATAW),
                     .ARBITER     (ARBITER),
+                    .LOCK_ENABLE (LOCK_ENABLE),
                     .MAX_FANOUT  (MAX_FANOUT),
-                    .OUT_BUF     (OUT_BUF)
+                    .OUT_REG     (OUT_REG)
                 ) arb_slice (
                     .clk       (clk),
                     .reset     (slice_reset),
@@ -247,8 +252,9 @@ module VX_stream_arb #(
                 .NUM_OUTPUTS (NUM_BATCHES),
                 .DATAW       (DATAW),
                 .ARBITER     (ARBITER),
+                .LOCK_ENABLE (LOCK_ENABLE),
                 .MAX_FANOUT  (MAX_FANOUT),
-                .OUT_BUF     (OUT_BUF)
+                .OUT_REG     (OUT_REG)
             ) fanout_fork_arb (
                 .clk       (clk),
                 .reset     (reset),
@@ -274,8 +280,9 @@ module VX_stream_arb #(
                     .NUM_OUTPUTS (BATCH_SIZE), 
                     .DATAW       (DATAW),
                     .ARBITER     (ARBITER),
+                    .LOCK_ENABLE (LOCK_ENABLE),
                     .MAX_FANOUT  (MAX_FANOUT),
-                    .OUT_BUF     (OUT_BUF)
+                    .OUT_REG     (OUT_REG)
                 ) fanout_slice_arb (
                     .clk       (clk),
                     .reset     (slice_reset),
@@ -298,31 +305,31 @@ module VX_stream_arb #(
             wire [NUM_OUTPUTS-1:0]  arb_requests;
             wire                    arb_valid;
             wire [NUM_OUTPUTS-1:0]  arb_onehot;
-            wire                    arb_ready;
+            wire                    arb_unlock;
 
             VX_generic_arbiter #(
                 .NUM_REQS    (NUM_OUTPUTS),
-                .LOCK_ENABLE (1),
+                .LOCK_ENABLE (LOCK_ENABLE),
                 .TYPE        (ARBITER)
             ) arbiter (
                 .clk          (clk),
                 .reset        (reset),
                 .requests     (arb_requests),
+                .unlock       (arb_unlock),
                 .grant_valid  (arb_valid),
                 `UNUSED_PIN (grant_index),
-                .grant_onehot (arb_onehot),
-                .grant_unlock (arb_ready)
+                .grant_onehot (arb_onehot)
             );
 
             assign arb_requests = ready_in_r;
-            assign arb_ready    = valid_in[0];
+            assign arb_unlock   = | (valid_in & ready_in);
             assign ready_in     = arb_valid;
 
             for (genvar i = 0; i < NUM_OUTPUTS; ++i) begin
                 VX_elastic_buffer #(
                     .DATAW    (DATAW),
-                    .SIZE     (`TO_OUT_BUF_SIZE(OUT_BUF)),
-                    .OUT_REG  (`TO_OUT_BUF_REG(OUT_BUF))
+                    .SIZE     (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+                    .OUT_REG  (`OUT_REG_TO_EB_REG(OUT_REG))
                 ) out_buf (
                     .clk       (clk),
                     .reset     (reset),
@@ -348,8 +355,8 @@ module VX_stream_arb #(
 
             VX_elastic_buffer #(
                 .DATAW   (DATAW),
-                .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
-                .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+                .SIZE    (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+                .OUT_REG (`OUT_REG_TO_EB_REG(OUT_REG))
             ) out_buf (
                 .clk       (clk),
                 .reset     (out_buf_reset),

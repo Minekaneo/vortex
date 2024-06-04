@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-# Copyright 2019-2023
-#
+# Copyright © 2019-2023
+# 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -34,11 +34,11 @@ def monitor(stop):
             break
 
 def execute(command):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
     while True:
         output = process.stdout.readline()
         if output:
-            line = output.decode('utf-8').rstrip()
+            line = output.decode('ascii').rstrip()
             print(">>> " + line)
             process.stdout.flush()
         ret = process.poll()

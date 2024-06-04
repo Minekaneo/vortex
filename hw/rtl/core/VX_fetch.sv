@@ -32,6 +32,7 @@ module VX_fetch import VX_gpu_pkg::*; #(
 );
     `UNUSED_PARAM (CORE_ID)
     `UNUSED_VAR (reset)
+    localparam ISW_WIDTH  = `LOG2UP(`ISSUE_WIDTH);
 
     wire icache_req_valid;
     wire [ICACHE_ADDR_WIDTH-1:0] icache_req_addr;
@@ -43,6 +44,8 @@ module VX_fetch import VX_gpu_pkg::*; #(
 
     wire icache_req_fire = icache_req_valid && icache_req_ready;
 
+    wire [ISW_WIDTH-1:0] schedule_isw = wid_to_isw(schedule_if.data.wid);
+    
     assign req_tag = schedule_if.data.wid;
     
     assign {rsp_uuid, rsp_tag} = icache_bus_if.rsp_data.tag;
@@ -65,34 +68,30 @@ module VX_fetch import VX_gpu_pkg::*; #(
         .rdata ({rsp_PC, rsp_tmask})
     );
 
-`ifndef L1_ENABLE
     // Ensure that the ibuffer doesn't fill up.
-    // This resolves potential deadlock if ibuffer fills and the LSU stalls the execute stage due to pending dcache requests.
-    // This issue is particularly prevalent when the icache and dcache are disabled and both requests share the same bus.
-    wire [`NUM_WARPS-1:0] pending_ibuf_full;
-    for (genvar i = 0; i < `NUM_WARPS; ++i) begin
+    // This resolves potential deadlock if ibuffer fills and the LSU stalls the execute stage due to pending dcache request.
+    // This issue is particularly prevalent when the icache and dcache is disabled and both requests share the same bus.
+    wire [`ISSUE_WIDTH-1:0] pending_ibuf_full;
+    for (genvar i = 0; i < `ISSUE_WIDTH; ++i) begin
         VX_pending_size #( 
             .SIZE (`IBUF_SIZE)
         ) pending_reads (
             .clk   (clk),
             .reset (reset),
-            .incr  (icache_req_fire && schedule_if.data.wid == i),
+            .incr  (icache_req_fire && schedule_isw == i),
             .decr  (fetch_if.ibuf_pop[i]),
             .full  (pending_ibuf_full[i]),
             `UNUSED_PIN (size),
             `UNUSED_PIN (empty)
         );
     end
-    wire ibuf_ready = ~pending_ibuf_full[schedule_if.data.wid];
-`else
-    wire ibuf_ready = 1'b1;
-`endif
 
     `RUNTIME_ASSERT((!schedule_if.valid || schedule_if.data.PC != 0), 
         ("%t: *** invalid PC=0x%0h, wid=%0d, tmask=%b (#%0d)", $time, schedule_if.data.PC, schedule_if.data.wid, schedule_if.data.tmask, schedule_if.data.uuid))
 
     // Icache Request
     
+    wire ibuf_ready = ~pending_ibuf_full[schedule_isw];
     assign icache_req_valid = schedule_if.valid && ibuf_ready;
     assign icache_req_addr  = schedule_if.data.PC[`MEM_ADDR_WIDTH-1:2];
     assign icache_req_tag   = {schedule_if.data.uuid, req_tag};

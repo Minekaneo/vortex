@@ -17,6 +17,18 @@
 `include "VX_fpu_define.vh"
 `endif
 
+`ifdef EXT_TEX_ENABLE
+`include "VX_tex_define.vh"
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+`include "VX_raster_define.vh"
+`endif
+
+`ifdef EXT_OM_ENABLE
+`include "VX_om_define.vh"
+`endif
+
 module VX_core import VX_gpu_pkg::*; #( 
     parameter CORE_ID = 0
 ) (        
@@ -35,6 +47,27 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS],
 
     VX_mem_bus_if.master    icache_bus_if,
+
+`ifdef EXT_TEX_ENABLE
+`ifdef PERF_ENABLE
+    VX_tex_perf_if.slave    perf_tex_if,
+`endif
+    VX_tex_bus_if.master    tex_bus_if,
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+`ifdef PERF_ENABLE
+    VX_raster_perf_if.slave perf_raster_if,
+`endif
+    VX_raster_bus_if.slave  raster_bus_if,
+`endif
+
+`ifdef EXT_OM_ENABLE
+`ifdef PERF_ENABLE
+    VX_om_perf_if.slave     perf_om_if,
+`endif
+    VX_om_bus_if.master     om_bus_if,
+`endif
 
 `ifdef GBAR_ENABLE
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -72,9 +105,9 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_writeback_if     writeback_if[`ISSUE_WIDTH]();
 
     VX_mem_bus_if #(
-        .DATA_SIZE (DCACHE_WORD_SIZE),
+        .DATA_SIZE (DCACHE_WORD_SIZE), 
         .TAG_WIDTH (DCACHE_TAG_WIDTH)
-    ) dcache_lmem_bus_if[DCACHE_NUM_REQS]();
+    ) dcache_bus_tmp_if[DCACHE_NUM_REQS]();
 
 `ifdef PERF_ENABLE
     VX_mem_perf_if mem_perf_tmp_if();
@@ -84,7 +117,16 @@ module VX_core import VX_gpu_pkg::*; #(
     assign mem_perf_tmp_if.dcache  = mem_perf_if.dcache;
     assign mem_perf_tmp_if.l2cache = mem_perf_if.l2cache;
     assign mem_perf_tmp_if.l3cache = mem_perf_if.l3cache;
-    assign mem_perf_tmp_if.mem     = mem_perf_if.mem;
+`ifdef EXT_TEX_ENABLE
+    assign mem_perf_tmp_if.tcache  = mem_perf_if.tcache;
+`endif
+`ifdef EXT_RASTER_ENABLE
+    assign mem_perf_tmp_if.rcache  = mem_perf_if.rcache;
+`endif
+`ifdef EXT_OM_ENABLE
+    assign mem_perf_tmp_if.ocache  = mem_perf_if.ocache;
+`endif    
+    assign mem_perf_tmp_if.mem = mem_perf_if.mem;
 `endif
 
     `RESET_RELAY (dcr_data_reset, reset);
@@ -191,11 +233,32 @@ module VX_core import VX_gpu_pkg::*; #(
         .pipeline_perf_if(pipeline_perf_if),
     `endif 
 
-        .dcache_bus_if  (dcache_lmem_bus_if),
+        .dcache_bus_if  (dcache_bus_tmp_if),
     
     `ifdef EXT_F_ENABLE
         .fpu_dispatch_if(fpu_dispatch_if),
         .fpu_commit_if  (fpu_commit_if),
+    `endif
+
+    `ifdef EXT_TEX_ENABLE
+        .tex_bus_if     (tex_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_tex_if    (perf_tex_if),
+    `endif
+    `endif
+    
+    `ifdef EXT_RASTER_ENABLE        
+        .raster_bus_if  (raster_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_raster_if (perf_raster_if),
+    `endif
+    `endif
+
+    `ifdef EXT_OM_ENABLE        
+        .om_bus_if      (om_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_om_if     (perf_om_if),
+    `endif
     `endif
 
         .commit_csr_if  (commit_csr_if),
@@ -236,24 +299,24 @@ module VX_core import VX_gpu_pkg::*; #(
         .sim_wb_value   (sim_wb_value)
     );
 
-`ifdef LMEM_ENABLE
+`ifdef SM_ENABLE
 
-    VX_lmem_unit #(
+    VX_smem_unit #(
         .CORE_ID (CORE_ID)
-    ) lmem_unit (
+    ) smem_unit (
         .clk                (clk),
         .reset              (reset),
     `ifdef PERF_ENABLE
-        .cache_perf         (mem_perf_tmp_if.lmem),
+        .cache_perf         (mem_perf_tmp_if.smem),
     `endif
-        .dcache_bus_in_if   (dcache_lmem_bus_if),
+        .dcache_bus_in_if   (dcache_bus_tmp_if),
         .dcache_bus_out_if  (dcache_bus_if)
     );
 
 `else
 
     for (genvar i = 0; i < DCACHE_NUM_REQS; ++i) begin
-        `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i], dcache_lmem_bus_if[i]);
+        `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i], dcache_bus_tmp_if[i]);
     end
 
 `endif

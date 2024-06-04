@@ -52,7 +52,10 @@ typedef void* vx_device_h;
 #define VX_ISA_EXT_DCACHE           (1ull << 33)
 #define VX_ISA_EXT_L2CACHE          (1ull << 34)
 #define VX_ISA_EXT_L3CACHE          (1ull << 35)
-#define VX_ISA_EXT_LMEM             (1ull << 36)
+#define VX_ISA_EXT_SMEM             (1ull << 36)
+#define VX_ISA_EXT_TEX              (1ull << 37)
+#define VX_ISA_EXT_RASTER           (1ull << 38)
+#define VX_ISA_EXT_OM               (1ull << 39)
 
 // device memory types
 #define VX_MEM_TYPE_GLOBAL          0

@@ -12,9 +12,9 @@ Vortex is a full-stack open-source RISC-V GPGPU.
     - configurable number of cores, warps, and threads.
     - configurable number of ALU, FPU, LSU, and SFU units per core.
     - configurable pipeline issue width.
-    - optional local memory, L1, L2, and L3 caches.
-- Software: 
-    - OpenCL 1.2 Support.
+    - optional graphics rasterizer, texture, and OM units.
+    - optional shared memory, L1, L2 and L3 caches.
+- Software: OpenCL 1.2 Support.
 - Supported FPGAs: 
     - Altera Arria 10
     - Altera Stratix 10
@@ -35,7 +35,7 @@ Vortex is a full-stack open-source RISC-V GPGPU.
 ## Build Instructions
 More detailed build instructions can be found [here](docs/install_vortex.md).
 ### Supported OS Platforms
-- Ubuntu 18.04, 20.04
+- Ubuntu 18.04
 - Centos 7
 ### Toolchain Dependencies
 - [POCL](http://portablecl.org/)
@@ -44,6 +44,7 @@ More detailed build instructions can be found [here](docs/install_vortex.md).
 - [Verilator](https://www.veripool.org/verilator)
 - [FpNew](https://github.com/pulp-platform/fpnew.git)
 - [SoftFloat](https://github.com/ucb-bar/berkeley-softfloat-3.git)
+- [CocoGfx](https://github.com/gtcasl/cocogfx.git)
 - [Ramulator](https://github.com/CMU-SAFARI/ramulator.git)
 - [Yosys](https://github.com/YosysHQ/yosys)
 - [Sv2v](https://github.com/zachjs/sv2v)
@@ -54,12 +55,10 @@ More detailed build instructions can be found [here](docs/install_vortex.md).
     $ git clone --recursive https://github.com/vortexgpgpu/vortex.git
     $ cd Vortex
 ### Install prebuilt toolchain
-    # By default, the toolchain will install to /opt folder which requires sudo access. Alternatively, you could also install the toolchain to a different location of your choice by setting the TOOLDIR environment variable
-
-    $ export TOOLDIR=$HOME/tools    
+    By default, the toolchain will install to /opt folder. 
+    You can install the toolchain to a different directory by overriding TOOLDIR (e.g. export TOOLDIR=$HOME/tools).
+    
     $ ./ci/toolchain_install.sh --all
-
-### Set up environment variables
     $ source ./ci/toolchain_env.sh
 ### Build Vortex sources
     $ make -s

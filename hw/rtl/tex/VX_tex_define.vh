@@ -34,7 +34,7 @@
 `define TEX_MIPOFF_BITS     (2*`VX_TEX_DIM_BITS+1)
 
 `define TEX_LGSTRIDE_MAX    2
-`dedfine TEX_LGSTRIDE_BITS   2
+`define TEX_LGSTRIDE_BITS   2
 
 `define TEX_BLEND_FRAC      `VX_TEX_SUBPIXEL_BITS
 `define TEX_BLEND_ONE       (2 ** `TEX_BLEND_FRAC)

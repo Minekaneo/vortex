@@ -19,9 +19,9 @@ module VX_mem_rsp_sel #(
     parameter DATA_WIDTH    = 1, 
     parameter TAG_WIDTH     = 1,    
     parameter TAG_SEL_BITS  = 0,
-    parameter OUT_BUF       = 0
+    parameter OUT_REG       = 0
 ) (
-    input wire                          clk,
+input wire                              clk,
     input wire                          reset,
 
     // input response
@@ -46,20 +46,18 @@ module VX_mem_rsp_sel #(
 
         wire [LOG_NUM_REQS-1:0] grant_index;
         wire grant_valid;
-        wire grant_ready;
+        wire rsp_fire;
 
-        VX_generic_arbiter #(
-            .NUM_REQS (NUM_REQS),
-            .LOCK_ENABLE (1),
-            .TYPE ("P")
+        VX_priority_arbiter #(
+            .NUM_REQS (NUM_REQS)
         ) arbiter (
             .clk         (clk),
             .reset       (reset),
+            .unlock      (rsp_fire),
             .requests    (rsp_valid_in), 
             .grant_valid (grant_valid),
             .grant_index (grant_index),
-            `UNUSED_PIN (grant_onehot),
-            .grant_unlock(grant_ready)
+            `UNUSED_PIN (grant_onehot)            
         );
 
         reg [NUM_REQS-1:0] rsp_valid_sel;
@@ -80,12 +78,12 @@ module VX_mem_rsp_sel #(
             end
         end                            
 
-        assign grant_ready = rsp_ready_unqual;
+        assign rsp_fire = grant_valid && rsp_ready_unqual;
         
         VX_elastic_buffer #(
             .DATAW   (NUM_REQS + TAG_WIDTH + (NUM_REQS * DATA_WIDTH)),
-            .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
-            .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+            .SIZE    (`OUT_REG_TO_EB_SIZE(OUT_REG)),
+            .OUT_REG (`OUT_REG_TO_EB_REG(OUT_REG))
         ) out_buf (
             .clk       (clk),
             .reset     (reset),

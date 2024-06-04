@@ -60,7 +60,8 @@ typedef std::unordered_map<uint32_t, uint32_t> CSRs;
 enum class RegType {
   None,
   Integer,
-  Float
+  Float,
+  Vector
 };
 
 inline std::ostream &operator<<(std::ostream &os, const RegType& type) {
@@ -68,6 +69,7 @@ inline std::ostream &operator<<(std::ostream &os, const RegType& type) {
   case RegType::None: break;
   case RegType::Integer: os << "x"; break;  
   case RegType::Float:   os << "f"; break;
+  case RegType::Vector:  os << "v"; break;
   default: assert(false);
   }
   return os;
@@ -193,6 +195,9 @@ enum class SfuType {
   CSRRW,
   CSRRS,
   CSRRC,
+  TEX,
+  RASTER,
+  OM,
   CMOV
 };
 
@@ -207,6 +212,9 @@ inline std::ostream &operator<<(std::ostream &os, const SfuType& type) {
   case SfuType::CSRRW:  os << "CSRRW"; break;
   case SfuType::CSRRS:  os << "CSRRS"; break;
   case SfuType::CSRRC:  os << "CSRRC"; break;
+  case SfuType::TEX:    os << "TEX"; break;
+  case SfuType::RASTER: os << "RASTER"; break;
+  case SfuType::OM :    os << "OM"; break;
   case SfuType::CMOV:   os << "CMOV"; break;
   default: assert(false);
   }
@@ -551,7 +559,7 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class LocalMemDemux : public SimObject<LocalMemDemux> {
+class SMemDemux : public SimObject<SMemDemux> {
 public:
   SimPort<MemReq> ReqIn;
   SimPort<MemRsp> RspIn;
@@ -562,11 +570,11 @@ public:
   SimPort<MemReq> ReqDC;
   SimPort<MemRsp> RspDC;
 
-  LocalMemDemux(
+  SMemDemux(
     const SimContext& ctx, 
     const char* name, 
     uint32_t delay = 1
-  ) : SimObject<LocalMemDemux>(ctx, name)    
+  ) : SimObject<SMemDemux>(ctx, name)    
     , ReqIn(this)
     , RspIn(this)
     , ReqSM(this)

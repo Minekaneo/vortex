@@ -483,11 +483,36 @@ module VX_decode  #(
                             default:;
                         endcase
                     end
+                    7'h01: begin
+                        case (func3)
+                        `ifdef EXT_RASTER_ENABLE
+                            3'h0: begin // RASTER
+                                ex_type = `EX_SFU;
+                                op_type = `INST_OP_BITS'(`INST_SFU_RASTER);
+                                use_rd  = 1;
+                                `USED_IREG (rd);
+                            end
+                        `endif
+                            default:;
+                        endcase
+                    end
                     default:;
                 endcase
             end
             `INST_EXT2: begin                
                 case (func3)
+                `ifdef EXT_TEX_ENABLE
+                    3'h0: begin // TEX
+                        ex_type = `EX_SFU;
+                        op_type = `INST_OP_BITS'(`INST_SFU_TEX);
+                        op_mod  = `INST_MOD_BITS'(func2);
+                        use_rd  = 1;
+                        `USED_IREG (rd);       
+                        `USED_IREG (rs1);
+                        `USED_IREG (rs2);
+                        `USED_IREG (rs3);
+                    end
+                `endif
                     3'h1: begin
                         case (func2)                       
                             2'h0: begin // CMOV
@@ -499,6 +524,15 @@ module VX_decode  #(
                                 `USED_IREG (rs2);
                                 `USED_IREG (rs3);
                             end
+                        `ifdef EXT_OM_ENABLE
+                            2'h1: begin // OM
+                                ex_type = `EX_SFU;
+                                op_type = `INST_OP_BITS'(`INST_SFU_OM);
+                                `USED_IREG (rs1);
+                                `USED_IREG (rs2);
+                                `USED_IREG (rs3);
+                            end
+                        `endif
                             default:;
                         endcase
                     end
@@ -533,32 +567,16 @@ module VX_decode  #(
     assign decode_sched_if.valid    = fetch_fire;
     assign decode_sched_if.wid      = fetch_if.data.wid;
     assign decode_sched_if.is_wstall = is_wstall;
-`ifndef L1_ENABLE    
+    
     assign fetch_if.ibuf_pop = decode_if.ibuf_pop;
-`endif
 
 `ifdef DBG_TRACE_CORE_PIPELINE
-`ifdef FLEN_64
-    wire fdst_d = decode_if.data.imm[0];
-`else
-    wire fdst_d = 0;
-`endif
-`ifdef XLEN_64
-    wire fcvt_l = decode_if.data.imm[1];
-`else
-    wire fcvt_l = 0;
-`endif
-`ifdef EXT_F_ENABLE
-    wire rd_float = 1'(decode_if.data.rd >> 5) || 1'(decode_if.data.rs2 >> 5);
-`else
-    wire rd_float = 0;
-`endif
     always @(posedge clk) begin
         if (decode_if.valid && decode_if.ready) begin
             `TRACE(1, ("%d: core%0d-decode: wid=%0d, PC=0x%0h, instr=0x%0h, ex=", $time, CORE_ID, decode_if.data.wid, decode_if.data.PC, instr));
             trace_ex_type(1, decode_if.data.ex_type);
             `TRACE(1, (", op="));
-            trace_ex_op(1, decode_if.data.ex_type, decode_if.data.op_type, decode_if.data.op_mod, decode_if.data.use_imm, fdst_d, fcvt_l, rd_float);
+            trace_ex_op(1, decode_if.data.ex_type, decode_if.data.op_type, decode_if.data.op_mod, decode_if.data.rd, decode_if.data.rs2, decode_if.data.use_imm, decode_if.data.imm);
             `TRACE(1, (", mod=%0d, tmask=%b, wb=%b, rd=%0d, rs1=%0d, rs2=%0d, rs3=%0d, imm=0x%0h, opds=%b%b%b%b, use_pc=%b, use_imm=%b (#%0d)\n",
                 decode_if.data.op_mod, decode_if.data.tmask, decode_if.data.wb, decode_if.data.rd, decode_if.data.rs1, decode_if.data.rs2, decode_if.data.rs3, decode_if.data.imm, use_rd, use_rs1, use_rs2, use_rs3, decode_if.data.use_PC, decode_if.data.use_imm, decode_if.data.uuid));
         end

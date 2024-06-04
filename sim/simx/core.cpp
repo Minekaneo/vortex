@@ -32,7 +32,10 @@ Core::Core(const SimContext& ctx,
            uint32_t core_id, 
            Socket* socket,
            const Arch &arch, 
-           const DCRS &dcrs)
+           const DCRS &dcrs,
+           const std::vector<RasterUnit::Ptr>& raster_units,
+           const std::vector<TexUnit::Ptr>& tex_units,
+           const std::vector<OMUnit::Ptr>& om_units)
     : SimObject(ctx, "core")
     , icache_req_ports(1, this)
     , icache_rsp_ports(1, this)
@@ -51,12 +54,18 @@ Core::Core(const SimContext& ctx,
     , operands_(ISSUE_WIDTH)
     , dispatchers_((uint32_t)ExeType::ExeTypeCount)
     , exe_units_((uint32_t)ExeType::ExeTypeCount)
-    , lmem_demuxs_(NUM_LSU_LANES)
+    , smem_demuxs_(NUM_LSU_LANES)
+    , raster_units_(raster_units)
+    , tex_units_(tex_units)
+    , om_units_(om_units)
     , fetch_latch_("fetch")
     , decode_latch_("decode")
     , pending_icache_(arch_.num_warps())
     , csrs_(arch.num_warps())  
     , commit_arbs_(ISSUE_WIDTH)
+    , raster_idx_(0)
+    , tex_idx_(0)
+    , om_idx_(0)
 {
   char sname[100];
 
@@ -72,26 +81,26 @@ Core::Core(const SimContext& ctx,
     operands_.at(i) = SimPlatform::instance().create_object<Operand>();
   }
 
-  // initialize local memory
-  snprintf(sname, 100, "core%d-local_mem", core_id);
-  local_mem_ = LocalMem::Create(sname, LocalMem::Config{
-    (1 << LMEM_LOG_SIZE),
+  // initialize shared memory
+  snprintf(sname, 100, "core%d-shared_mem", core_id);
+  shared_mem_ = SharedMem::Create(sname, SharedMem::Config{
+    (1 << SMEM_LOG_SIZE),
     sizeof(Word),
     NUM_LSU_LANES, 
     NUM_LSU_LANES,
     false
   });
   for (uint32_t i = 0; i < NUM_LSU_LANES; ++i) {
-    snprintf(sname, 100, "core%d-lmem_demux%d", core_id, i);
-    auto lmem_demux = LocalMemDemux::Create(sname);
+    snprintf(sname, 100, "core%d-smem_demux%d", core_id, i);
+    auto smem_demux = SMemDemux::Create(sname);
     
-    lmem_demux->ReqDC.bind(&dcache_req_ports.at(i));
-    dcache_rsp_ports.at(i).bind(&lmem_demux->RspDC);
+    smem_demux->ReqDC.bind(&dcache_req_ports.at(i));
+    dcache_rsp_ports.at(i).bind(&smem_demux->RspDC);
 
-    lmem_demux->ReqSM.bind(&local_mem_->Inputs.at(i));
-    local_mem_->Outputs.at(i).bind(&lmem_demux->RspSM);
+    smem_demux->ReqSM.bind(&shared_mem_->Inputs.at(i));
+    shared_mem_->Outputs.at(i).bind(&smem_demux->RspSM);
 
-    lmem_demuxs_.at(i) = lmem_demux;
+    smem_demuxs_.at(i) = smem_demux;
   }
 
   // initialize dispatchers
@@ -132,6 +141,18 @@ void Core::reset() {
 
   for (auto& exe_unit : exe_units_) {
     exe_unit->reset();
+  }
+
+  for (auto& raster_unit : raster_units_) {
+    raster_unit->reset();
+  }
+
+  for (auto& tex_unit : tex_units_) {
+    tex_unit->reset();
+  }
+
+  for (auto& om_unit : om_units_) {
+    om_unit->reset();
   }
  
   for (auto& commit_arb : commit_arbs_) {
@@ -210,7 +231,7 @@ void Core::schedule() {
 void Core::fetch() {
   perf_stats_.ifetch_latency += pending_ifetches_;
 
-  // handle icache response
+  // handle icache reponse
   auto& icache_rsp_port = icache_rsp_ports.at(0);
   if (!icache_rsp_port.empty()){
     auto& mem_rsp = icache_rsp_port.front();
@@ -328,6 +349,9 @@ void Core::issue() {
           case SfuType::CSRRW:
           case SfuType::CSRRS:
           case SfuType::CSRRC: ++perf_stats_.scrb_csrs; break;
+          case SfuType::TEX: ++perf_stats_.scrb_tex; break;
+          case SfuType::RASTER: ++perf_stats_.scrb_raster; break;
+          case SfuType::OM: ++perf_stats_.scrb_om; break;
           default: assert(false);
           }
         } break;
@@ -445,8 +469,8 @@ void Core::icache_read(void *data, uint64_t addr, uint32_t size) {
 }
 
 AddrType Core::get_addr_type(uint64_t addr) {
-  if (LMEM_ENABLED) {
-    if (addr >= LMEM_BASE_ADDR && addr < (LMEM_BASE_ADDR + (1 << LMEM_LOG_SIZE))) {
+  if (SM_ENABLED) {
+    if (addr >= SMEM_BASE_ADDR && addr < (SMEM_BASE_ADDR + (1 << SMEM_LOG_SIZE))) {
         return AddrType::Shared;
     }
   }
@@ -459,7 +483,7 @@ AddrType Core::get_addr_type(uint64_t addr) {
 void Core::dcache_read(void *data, uint64_t addr, uint32_t size) {  
   auto type = this->get_addr_type(addr);
   if (type == AddrType::Shared) {
-    local_mem_->read(data, addr, size);
+    shared_mem_->read(data, addr, size);
   } else {  
     mmu_.read(data, addr, size, 0);
   }
@@ -474,7 +498,7 @@ void Core::dcache_write(const void* data, uint64_t addr, uint32_t size) {
      this->writeToStdOut(data, addr, size);
   } else {
     if (type == AddrType::Shared) {
-      local_mem_->write(data, addr, size);
+      shared_mem_->write(data, addr, size);
     } else {
       mmu_.write(data, addr, size, 0);
     }
@@ -596,6 +620,12 @@ uint32_t Core::get_csr(uint32_t addr, uint32_t tid, uint32_t wid) {
         case VX_CSR_MPM_SCRB_WCTL_H: return perf_stats_.scrb_wctl >> 32;
         case VX_CSR_MPM_SCRB_CSRS: return perf_stats_.scrb_csrs & 0xffffffff;
         case VX_CSR_MPM_SCRB_CSRS_H: return perf_stats_.scrb_csrs >> 32;
+        case VX_CSR_MPM_SCRB_TEX:  return perf_stats_.scrb_tex & 0xffffffff;
+        case VX_CSR_MPM_SCRB_TEX_H: return perf_stats_.scrb_tex >> 32;
+        case VX_CSR_MPM_SCRB_RASTER: return perf_stats_.scrb_raster & 0xffffffff;
+        case VX_CSR_MPM_SCRB_RASTER_H: return perf_stats_.scrb_raster >> 32;
+        case VX_CSR_MPM_SCRB_OM:   return perf_stats_.scrb_om & 0xffffffff;
+        case VX_CSR_MPM_SCRB_OM_H: return perf_stats_.scrb_om >> 32;
         case VX_CSR_MPM_IFETCHES:  return perf_stats_.ifetches & 0xffffffff; 
         case VX_CSR_MPM_IFETCHES_H: return perf_stats_.ifetches >> 32; 
         case VX_CSR_MPM_LOADS:     return perf_stats_.loads & 0xffffffff; 
@@ -612,7 +642,7 @@ uint32_t Core::get_csr(uint32_t addr, uint32_t tid, uint32_t wid) {
         auto proc_perf = socket_->cluster()->processor()->perf_stats();
         auto cluster_perf = socket_->cluster()->perf_stats();
         auto socket_perf = socket_->perf_stats();
-        auto lmem_perf = local_mem_->perf_stats();
+        auto smem_perf = shared_mem_->perf_stats();
         switch (addr) {
         case VX_CSR_MPM_ICACHE_READS:     return socket_perf.icache.reads & 0xffffffff; 
         case VX_CSR_MPM_ICACHE_READS_H:   return socket_perf.icache.reads >> 32; 
@@ -667,12 +697,94 @@ uint32_t Core::get_csr(uint32_t addr, uint32_t tid, uint32_t wid) {
         case VX_CSR_MPM_MEM_LT:           return proc_perf.mem_latency & 0xffffffff; 
         case VX_CSR_MPM_MEM_LT_H :        return proc_perf.mem_latency >> 32;
          
-        case VX_CSR_MPM_LMEM_READS:       return lmem_perf.reads & 0xffffffff;
-        case VX_CSR_MPM_LMEM_READS_H:     return lmem_perf.reads >> 32;
-        case VX_CSR_MPM_LMEM_WRITES:      return lmem_perf.writes & 0xffffffff;
-        case VX_CSR_MPM_LMEM_WRITES_H:    return lmem_perf.writes >> 32;
-        case VX_CSR_MPM_LMEM_BANK_ST:     return lmem_perf.bank_stalls & 0xffffffff; 
-        case VX_CSR_MPM_LMEM_BANK_ST_H:   return lmem_perf.bank_stalls >> 32; 
+        case VX_CSR_MPM_SMEM_READS:       return smem_perf.reads & 0xffffffff;
+        case VX_CSR_MPM_SMEM_READS_H:     return smem_perf.reads >> 32;
+        case VX_CSR_MPM_SMEM_WRITES:      return smem_perf.writes & 0xffffffff;
+        case VX_CSR_MPM_SMEM_WRITES_H:    return smem_perf.writes >> 32;
+        case VX_CSR_MPM_SMEM_BANK_ST:     return smem_perf.bank_stalls & 0xffffffff; 
+        case VX_CSR_MPM_SMEM_BANK_ST_H:   return smem_perf.bank_stalls >> 32; 
+        }
+      } break;
+      case VX_DCR_MPM_CLASS_TEX: {
+        TexUnit::PerfStats tex_perf_stats;
+        for (auto tex_unit : tex_units_) {
+          tex_perf_stats += tex_unit->perf_stats();
+        }
+        auto cluster_perf = socket_->cluster()->perf_stats();
+        switch (addr) {
+        case VX_CSR_MPM_TEX_READS:   return tex_perf_stats.reads & 0xffffffff;
+        case VX_CSR_MPM_TEX_READS_H: return tex_perf_stats.reads >> 32;
+        case VX_CSR_MPM_TEX_LAT:     return tex_perf_stats.latency & 0xffffffff;
+        case VX_CSR_MPM_TEX_LAT_H:   return tex_perf_stats.latency >> 32;
+        case VX_CSR_MPM_TEX_STALL:   return tex_perf_stats.stalls & 0xffffffff;
+        case VX_CSR_MPM_TEX_STALL_H: return tex_perf_stats.stalls >> 32;
+
+        case VX_CSR_MPM_TCACHE_READS:    return cluster_perf.tcache.reads & 0xffffffff; 
+        case VX_CSR_MPM_TCACHE_READS_H:  return cluster_perf.tcache.reads >> 32;
+        case VX_CSR_MPM_TCACHE_MISS_R:   return cluster_perf.tcache.read_misses & 0xffffffff; 
+        case VX_CSR_MPM_TCACHE_MISS_R_H: return cluster_perf.tcache.read_misses >> 32;
+        case VX_CSR_MPM_TCACHE_BANK_ST:  return cluster_perf.tcache.bank_stalls & 0xffffffff; 
+        case VX_CSR_MPM_TCACHE_BANK_ST_H:return cluster_perf.tcache.bank_stalls >> 32;
+        case VX_CSR_MPM_TCACHE_MSHR_ST:  return cluster_perf.tcache.mshr_stalls & 0xffffffff; 
+        case VX_CSR_MPM_TCACHE_MSHR_ST_H:return cluster_perf.tcache.mshr_stalls >> 32;
+        }
+      } break;
+      case VX_DCR_MPM_CLASS_RASTER: {
+        RasterUnit::PerfStats raster_perf_stats;
+        for (auto raster_unit : raster_units_) {
+          raster_perf_stats += raster_unit->perf_stats();
+        }
+        auto cluster_perf = socket_->cluster()->perf_stats();
+        switch (addr) {        
+        case VX_CSR_MPM_RASTER_READS:   return raster_perf_stats.reads & 0xffffffff;
+        case VX_CSR_MPM_RASTER_READS_H: return raster_perf_stats.reads >> 32;
+        case VX_CSR_MPM_RASTER_LAT:     return raster_perf_stats.latency & 0xffffffff;
+        case VX_CSR_MPM_RASTER_LAT_H:   return raster_perf_stats.latency >> 32;
+        case VX_CSR_MPM_RASTER_STALL:   return raster_perf_stats.stalls & 0xffffffff;
+        case VX_CSR_MPM_RASTER_STALL_H: return raster_perf_stats.stalls >> 32;
+
+        case VX_CSR_MPM_RCACHE_READS:   return cluster_perf.rcache.reads & 0xffffffff; 
+        case VX_CSR_MPM_RCACHE_READS_H: return cluster_perf.rcache.reads >> 32; 
+        case VX_CSR_MPM_RCACHE_MISS_R:  return cluster_perf.rcache.read_misses & 0xffffffff; 
+        case VX_CSR_MPM_RCACHE_MISS_R_H: return cluster_perf.rcache.read_misses >> 32;  
+        case VX_CSR_MPM_RCACHE_BANK_ST: return cluster_perf.rcache.bank_stalls & 0xffffffff; 
+        case VX_CSR_MPM_RCACHE_BANK_ST_H:return cluster_perf.rcache.bank_stalls >> 32;
+        case VX_CSR_MPM_RCACHE_MSHR_ST: return cluster_perf.rcache.mshr_stalls & 0xffffffff; 
+        case VX_CSR_MPM_RCACHE_MSHR_ST_H:return cluster_perf.rcache.mshr_stalls >> 32;
+        default:
+          return 0;
+        }
+      } break;
+      case VX_DCR_MPM_CLASS_OM: {
+        OMUnit::PerfStats om_perf_stats;
+        for (auto om_unit : om_units_) {
+          om_perf_stats += om_unit->perf_stats();
+        }
+        auto cluster_perf = socket_->cluster()->perf_stats();
+        switch (addr) { 
+        case VX_CSR_MPM_OM_READS:     return om_perf_stats.reads & 0xffffffff;
+        case VX_CSR_MPM_OM_READS_H:   return om_perf_stats.reads >> 32;
+        case VX_CSR_MPM_OM_WRITES:    return om_perf_stats.writes & 0xffffffff;
+        case VX_CSR_MPM_OM_WRITES_H:  return om_perf_stats.writes >> 32;
+        case VX_CSR_MPM_OM_LAT:       return om_perf_stats.latency & 0xffffffff;
+        case VX_CSR_MPM_OM_LAT_H:     return om_perf_stats.latency >> 32;
+        case VX_CSR_MPM_OM_STALL:     return om_perf_stats.stalls & 0xffffffff;
+        case VX_CSR_MPM_OM_STALL_H:   return om_perf_stats.stalls >> 32;
+
+        case VX_CSR_MPM_OCACHE_READS:   return cluster_perf.ocache.reads & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_READS_H: return cluster_perf.ocache.reads >> 32; 
+        case VX_CSR_MPM_OCACHE_WRITES:  return cluster_perf.ocache.writes & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_WRITES_H: return cluster_perf.ocache.writes >> 32; 
+        case VX_CSR_MPM_OCACHE_MISS_R:  return cluster_perf.ocache.read_misses & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_MISS_R_H: return cluster_perf.ocache.read_misses >> 32; 
+        case VX_CSR_MPM_OCACHE_MISS_W:  return cluster_perf.ocache.write_misses & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_MISS_W_H: return cluster_perf.ocache.write_misses >> 32; 
+        case VX_CSR_MPM_OCACHE_BANK_ST: return cluster_perf.ocache.bank_stalls & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_BANK_ST_H:return cluster_perf.ocache.bank_stalls >> 32;
+        case VX_CSR_MPM_OCACHE_MSHR_ST: return cluster_perf.ocache.mshr_stalls & 0xffffffff; 
+        case VX_CSR_MPM_OCACHE_MSHR_ST_H:return cluster_perf.ocache.mshr_stalls >> 32;
+        default:
+          return 0;
         }
       } break;
       default: {
@@ -680,7 +792,14 @@ uint32_t Core::get_csr(uint32_t addr, uint32_t tid, uint32_t wid) {
         std::abort();
       } break;
       }
-    } else {
+    } else
+  #ifdef EXT_RASTER_ENABLE
+    if (addr >= VX_CSR_RASTER_BEGIN
+     && addr < VX_CSR_RASTER_END) {
+      return csrs_.at(wid).at(tid).at(addr);
+    } else
+  #endif
+    {
       std::cout << std::hex << "Error: invalid CSR read addr=0x" << addr << std::endl;
       std::abort();
     }
@@ -712,6 +831,18 @@ void Core::set_csr(uint32_t addr, uint32_t value, uint32_t tid, uint32_t wid) {
   case VX_CSR_MNSTATUS:
     break;
   default:
+  #ifdef EXT_OM_ENABLE
+    if (addr >= VX_CSR_OM_BEGIN
+     && addr < VX_CSR_OM_END) {
+      csrs_.at(wid).at(tid)[addr] = value;
+    } else
+  #endif
+  #ifdef EXT_TEX_ENABLE
+    if (addr >= VX_CSR_TEX_BEGIN
+     && addr < VX_CSR_TEX_END) {
+      csrs_.at(wid).at(tid)[addr] = value;
+    } else
+  #endif
     {
       std::cout << std::hex << "Error: invalid CSR write addr=0x" << addr << ", value=0x" << value << std::endl;
       std::abort();
@@ -757,4 +888,22 @@ void Core::attach_ram(RAM* ram) {
 #else
   mmu_.attach(*ram, 0, 0xFFFFFFFF);
 #endif
+}
+
+uint32_t Core::raster_idx() {
+  auto ret = raster_idx_++;
+  raster_idx_ %= raster_units_.size();
+  return ret;
+}
+
+uint32_t Core::om_idx() {
+  auto ret = om_idx_++;
+  om_idx_ %= om_units_.size();
+  return ret;
+}
+
+uint32_t Core::tex_idx() {
+  auto ret = tex_idx_++;
+  tex_idx_ %= tex_units_.size();
+  return ret;
 }

@@ -32,6 +32,27 @@ module VX_socket import VX_gpu_pkg::*; #(
     // Memory
     VX_mem_bus_if.master    mem_bus_if,
 
+`ifdef EXT_TEX_ENABLE
+`ifdef PERF_ENABLE
+    VX_tex_perf_if.slave    perf_tex_if,
+`endif
+    VX_tex_bus_if.master    tex_bus_if,
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+`ifdef PERF_ENABLE
+    VX_raster_perf_if.slave perf_raster_if,
+`endif
+    VX_raster_bus_if.slave  raster_bus_if,
+`endif
+
+`ifdef EXT_OM_ENABLE
+`ifdef PERF_ENABLE
+    VX_om_perf_if.slave     perf_om_if,
+`endif
+    VX_om_bus_if.master     om_bus_if,
+`endif
+
 `ifdef GBAR_ENABLE
     // Barrier
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -52,7 +73,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 
     VX_gbar_arb #(
         .NUM_REQS (`SOCKET_SIZE),
-        .OUT_BUF  ((`SOCKET_SIZE > 1) ? 2 : 0)
+        .OUT_REG  ((`SOCKET_SIZE > 1) ? 2 : 0)
     ) gbar_arb (
         .clk        (clk),
         .reset      (gbar_arb_reset),
@@ -61,20 +82,111 @@ module VX_socket import VX_gpu_pkg::*; #(
     );
 `endif
 
+`ifdef EXT_RASTER_ENABLE
+
+    VX_raster_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES)
+    ) per_core_raster_bus_if[`SOCKET_SIZE](), raster_bus_tmp_if[1]();
+
+    `RESET_RELAY (raster_arb_reset, reset);
+
+    VX_raster_arb #(
+        .NUM_INPUTS  (1),
+        .NUM_LANES   (`NUM_SFU_LANES),
+        .NUM_OUTPUTS (`SOCKET_SIZE),
+        .ARBITER     ("R"),
+        .OUT_REG     ((`SOCKET_SIZE > 1) ? 2 : 0)
+    ) raster_arb (
+        .clk        (clk),
+        .reset      (raster_arb_reset),
+        .bus_in_if  (raster_bus_tmp_if),
+        .bus_out_if (per_core_raster_bus_if)
+    );
+
+    `ASSIGN_VX_RASTER_BUS_IF (raster_bus_tmp_if[0], raster_bus_if);
+
+`endif
+
+`ifdef EXT_OM_ENABLE
+
+    VX_om_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES)
+    ) per_core_om_bus_if[`SOCKET_SIZE](), om_bus_tmp_if[1]();
+
+    `RESET_RELAY (om_arb_reset, reset);
+
+    VX_om_arb #(
+        .NUM_INPUTS  (`SOCKET_SIZE),
+        .NUM_OUTPUTS (1),
+        .NUM_LANES   (`NUM_SFU_LANES),        
+        .ARBITER     ("R"),
+        .OUT_REG     ((`SOCKET_SIZE > 1) ? 2 : 0)
+    ) om_arb (
+        .clk        (clk),
+        .reset      (om_arb_reset),
+        .bus_in_if  (per_core_om_bus_if),
+        .bus_out_if (om_bus_tmp_if)
+    );
+
+    `ASSIGN_VX_OM_BUS_IF (om_bus_if, om_bus_tmp_if[0]);
+
+`endif
+
+`ifdef EXT_TEX_ENABLE
+
+    VX_tex_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES),
+        .TAG_WIDTH (`TEX_REQ_TAG_WIDTH)
+    ) per_core_tex_bus_if[`SOCKET_SIZE]();
+
+    VX_tex_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES),
+        .TAG_WIDTH (`TEX_REQ_ARB1_TAG_WIDTH)
+    ) tex_bus_tmp_if[1]();
+
+    `RESET_RELAY (tex_arb_reset, reset);
+
+    VX_tex_arb #(
+        .NUM_INPUTS   (`SOCKET_SIZE),        
+        .NUM_OUTPUTS  (1),
+        .NUM_LANES    (`NUM_SFU_LANES),
+        .TAG_WIDTH    (`TEX_REQ_TAG_WIDTH),
+        .ARBITER      ("R"),
+        .OUT_REG_REQ ((`SOCKET_SIZE > 1) ? 2 : 0)
+    ) tex_arb (
+        .clk        (clk),
+        .reset      (tex_arb_reset),
+        .bus_in_if  (per_core_tex_bus_if),
+        .bus_out_if (tex_bus_tmp_if)
+    );
+
+    `ASSIGN_VX_TEX_BUS_IF (tex_bus_if, tex_bus_tmp_if[0]);
+            
+`endif
+
     ///////////////////////////////////////////////////////////////////////////
 
 `ifdef PERF_ENABLE
     VX_mem_perf_if mem_perf_tmp_if();
     assign mem_perf_tmp_if.l2cache = mem_perf_if.l2cache;
     assign mem_perf_tmp_if.l3cache = mem_perf_if.l3cache;
-    assign mem_perf_tmp_if.lmem = 'x;
+`ifdef EXT_TEX_ENABLE
+    assign mem_perf_tmp_if.tcache  = mem_perf_if.tcache;
+`endif
+`ifdef EXT_RASTER_ENABLE
+    assign mem_perf_tmp_if.rcache  = mem_perf_if.rcache;
+`endif
+`ifdef EXT_OM_ENABLE
+    assign mem_perf_tmp_if.ocache  = mem_perf_if.ocache;
+`endif
+    assign mem_perf_tmp_if.smem = 'x;
     assign mem_perf_tmp_if.mem = mem_perf_if.mem;
 `endif
 
     ///////////////////////////////////////////////////////////////////////////
 
     VX_mem_bus_if #(
-        .DATA_SIZE (ICACHE_WORD_SIZE),
+        .DATA_SIZE (ICACHE_WORD_SIZE), 
         .TAG_WIDTH (ICACHE_TAG_WIDTH)
     ) per_core_icache_bus_if[`SOCKET_SIZE]();
 
@@ -102,10 +214,9 @@ module VX_socket import VX_gpu_pkg::*; #(
         .MREQ_SIZE      (`ICACHE_MREQ_SIZE),
         .TAG_WIDTH      (ICACHE_TAG_WIDTH),
         .UUID_WIDTH     (`UUID_WIDTH),
-        .WRITE_ENABLE   (0),      
-        .NC_ENABLE      (0),
-        .CORE_OUT_BUF   (2),
-        .MEM_OUT_BUF    (2)
+        .WRITE_ENABLE   (0),
+        .CORE_OUT_REG   (2),
+        .MEM_OUT_REG    (2)
     ) icache (
     `ifdef PERF_ENABLE
         .cache_perf     (mem_perf_tmp_if.icache),
@@ -120,7 +231,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
-        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+        .TAG_WIDTH (DCACHE_NOSM_TAG_WIDTH)
     ) per_core_dcache_bus_if[`SOCKET_SIZE * DCACHE_NUM_REQS]();
     
     VX_mem_bus_if #(
@@ -134,7 +245,7 @@ module VX_socket import VX_gpu_pkg::*; #(
         .INSTANCE_ID    ($sformatf("socket%0d-dcache", SOCKET_ID)),    
         .NUM_UNITS      (`NUM_DCACHES),
         .NUM_INPUTS     (`SOCKET_SIZE),
-        .TAG_SEL_IDX    (0),
+        .TAG_SEL_IDX    (1),
         .CACHE_SIZE     (`DCACHE_SIZE),
         .LINE_SIZE      (DCACHE_LINE_SIZE),
         .NUM_BANKS      (`DCACHE_NUM_BANKS),
@@ -145,12 +256,12 @@ module VX_socket import VX_gpu_pkg::*; #(
         .MSHR_SIZE      (`DCACHE_MSHR_SIZE),
         .MRSQ_SIZE      (`DCACHE_MRSQ_SIZE),
         .MREQ_SIZE      (`DCACHE_MREQ_SIZE),
-        .TAG_WIDTH      (DCACHE_TAG_WIDTH),
+        .TAG_WIDTH      (DCACHE_NOSM_TAG_WIDTH),
         .UUID_WIDTH     (`UUID_WIDTH),
         .WRITE_ENABLE   (1),        
         .NC_ENABLE      (1),
-        .CORE_OUT_BUF   (`LMEM_ENABLED ? 2 : 1),
-        .MEM_OUT_BUF    (2)
+        .CORE_OUT_REG   (`SM_ENABLED ? 2 : 1),
+        .MEM_OUT_REG    (2)
     ) dcache (
     `ifdef PERF_ENABLE
         .cache_perf     (mem_perf_tmp_if.dcache),
@@ -182,10 +293,10 @@ module VX_socket import VX_gpu_pkg::*; #(
         .NUM_INPUTS   (2),
         .DATA_SIZE    (`L1_LINE_SIZE),
         .TAG_WIDTH    (L1_MEM_TAG_WIDTH),
-        .TAG_SEL_IDX  (0),
+        .TAG_SEL_IDX  (1), // Skip 0 for NC flag
         .ARBITER      ("R"),
-        .REQ_OUT_BUF  (2),
-        .RSP_OUT_BUF  (2)
+        .OUT_REG_REQ  (2),
+        .OUT_REG_RSP  (2)
     ) mem_arb (
         .clk        (clk),
         .reset      (mem_arb_reset),
@@ -232,6 +343,27 @@ module VX_socket import VX_gpu_pkg::*; #(
             .dcache_bus_if  (per_core_dcache_bus_if[i * DCACHE_NUM_REQS +: DCACHE_NUM_REQS]),
 
             .icache_bus_if  (per_core_icache_bus_if[i]),
+
+        `ifdef EXT_TEX_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_tex_if    (perf_tex_if),
+        `endif
+            .tex_bus_if     (per_core_tex_bus_if[i]),
+        `endif
+
+        `ifdef EXT_RASTER_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_raster_if (perf_raster_if),
+        `endif
+            .raster_bus_if  (per_core_raster_bus_if[i]),
+        `endif
+        
+        `ifdef EXT_OM_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_om_if     (perf_om_if),
+        `endif
+            .om_bus_if      (per_core_om_bus_if[i]),
+        `endif
 
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_core_gbar_bus_if[i]),

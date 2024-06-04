@@ -9,6 +9,8 @@ addons:
       - build-essential
       - valgrind
       - libstdc++6
+      - libpng-dev
+      - libboost-serialization-dev
 
 env:
   global:
@@ -37,8 +39,8 @@ jobs:
       script:
         - rm -rf $HOME/build32 && cp -r $PWD $HOME/build32
         - rm -rf $HOME/build64 && cp -r $PWD $HOME/build64
-        - make -C $HOME/build32 > /dev/null
-        - XLEN=64 make -C $HOME/build64 > /dev/null
+        - make -C $HOME/build32
+        - XLEN=64 make -C $HOME/build64
     - stage: test 
       name: unittest
       script: cp -r $HOME/build32 build && cd build && ./ci/travis_run.py ./ci/regression.sh --unittest
@@ -56,7 +58,22 @@ jobs:
       script: cp -r $HOME/build64 build && cd build && XLEN=64 ./ci/travis_run.py ./ci/regression.sh --regression
     - stage: test 
       name: opencl
-      script: cp -r $HOME/build32 build && cd build && ./ci/travis_run.py ./ci/regression.sh --opencl    
+      script: cp -r $HOME/build32 $HOME/build32_opencl && cd $HOME/build32_opencl && ./ci/travis_run.py ./ci/regression.sh --opencl    
+    - stage: test
+      name: graphics
+      script: cp -r $HOME/build32 $HOME/build32_graphics && cd $HOME/build32_graphics && ./ci/travis_run.py ./ci/regression.sh --graphics
+    - stage: test
+      name: graphics64
+      script: cp -r $HOME/build64 $HOME/build64_graphics && cd $HOME/build64_graphics && XLEN=64 RISCV_TOOLCHAIN_PATH=$TOOLDIR/riscv64-gnu-toolchain ./ci/travis_run.py ./ci/regression.sh --graphics
+    - stage: test
+      name: tex
+      script: cp -r $HOME/build32 $HOME/build32_tex && cd $HOME/build32_tex && ./ci/travis_run.py ./ci/regression.sh --tex
+    - stage: test
+      name: om
+      script: cp -r $HOME/build32 $HOME/build32_om && cd $HOME/build32_om && ./ci/travis_run.py ./ci/regression.sh --om
+    - stage: test
+      name: raster
+      script: cp -r $HOME/build32 $HOME/build32_raster && cd $HOME/build32_raster && ./ci/travis_run.py ./ci/regression.sh --raster
     - stage: test 
       name: cluster
       script: cp -r $HOME/build32 build && cd build && ./ci/travis_run.py ./ci/regression.sh --cluster    

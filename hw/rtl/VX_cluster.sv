@@ -13,6 +13,18 @@
 
 `include "VX_define.vh"
 
+`ifdef EXT_TEX_ENABLE
+`include "VX_tex_define.vh"
+`endif
+
+`ifdef EXT_RASTER_ENABLE
+`include "VX_raster_define.vh"
+`endif
+
+`ifdef EXT_OM_ENABLE
+`include "VX_om_define.vh"
+`endif
+
 module VX_cluster import VX_gpu_pkg::*; #(
     parameter CLUSTER_ID = 0
 ) ( 
@@ -41,7 +53,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
 );
 
 `ifdef SCOPE
-    localparam scope_socket = 0;
+    localparam scope_socket = `EXT_RASTER_ENABLED ? `NUM_RASTER_UNITS : 0;
     `SCOPE_IO_SWITCH (scope_socket + `NUM_SOCKETS);
 `endif    
 
@@ -50,7 +62,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
     assign mem_perf_tmp_if.icache  = 'x;
     assign mem_perf_tmp_if.dcache  = 'x;
     assign mem_perf_tmp_if.l3cache = mem_perf_if.l3cache;
-    assign mem_perf_tmp_if.lmem    = 'x;
+    assign mem_perf_tmp_if.smem    = 'x;
     assign mem_perf_tmp_if.mem     = mem_perf_if.mem;
 `endif    
 
@@ -63,7 +75,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
 
     VX_gbar_arb #(
         .NUM_REQS (`NUM_SOCKETS),
-        .OUT_BUF  ((`NUM_SOCKETS > 2) ? 1 : 0) // bgar_unit has no backpressure
+        .OUT_REG  ((`NUM_SOCKETS > 2) ? 1 : 0) // bgar_unit has no backpressure
     ) gbar_arb (
         .clk        (clk),
         .reset      (gbar_reset),
@@ -81,10 +93,94 @@ module VX_cluster import VX_gpu_pkg::*; #(
 
 `endif
 
+`ifdef EXT_RASTER_ENABLE
+
+    VX_raster_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES)
+    ) per_socket_raster_bus_if[`NUM_SOCKETS]();
+
+`ifdef PERF_ENABLE
+    VX_raster_perf_if perf_raster_if[`NUM_SOCKETS]();
+`endif
+
+`endif
+
+`ifdef EXT_TEX_ENABLE
+
+    VX_tex_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES),
+        .TAG_WIDTH (`TEX_REQ_ARB1_TAG_WIDTH)
+    ) per_socket_tex_bus_if[`NUM_SOCKETS]();
+
+`ifdef PERF_ENABLE
+    VX_tex_perf_if perf_tex_if[`NUM_SOCKETS]();
+`endif
+
+`endif
+
+`ifdef EXT_OM_ENABLE
+
+    VX_om_bus_if #(
+        .NUM_LANES (`NUM_SFU_LANES)
+    ) per_socket_om_bus_if[`NUM_SOCKETS]();
+
+`ifdef PERF_ENABLE
+    VX_om_perf_if perf_om_if[`NUM_SOCKETS]();
+`endif
+
+`endif
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (L2_WORD_SIZE),
+        .TAG_WIDTH (L2_TAG_WIDTH)
+    ) l2_mem_bus_if[L2_NUM_REQS]();
+
+    `RESET_RELAY (graphics_reset, reset);
+
+    VX_graphics #(
+        .CLUSTER_ID (CLUSTER_ID)
+    ) graphics (
+        .clk   (clk),
+        .reset (graphics_reset),
+
+    `ifdef EXT_RASTER_ENABLE
+        .per_socket_raster_bus_if (per_socket_raster_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_raster_if (perf_raster_if),
+        .perf_rcache (mem_perf_tmp_if.rcache),
+    `endif
+        .rcache_mem_bus_if (l2_mem_bus_if[RCACHE_MEM_L2_IDX]),
+    `endif
+
+    `ifdef EXT_TEX_ENABLE
+        .per_socket_tex_bus_if (per_socket_tex_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_tex_if (perf_tex_if),
+        .perf_tcache (mem_perf_tmp_if.tcache),
+    `endif
+        .tcache_mem_bus_if (l2_mem_bus_if[TCACHE_MEM_L2_IDX]),
+    `endif
+
+    `ifdef EXT_OM_ENABLE
+        .per_socket_om_bus_if (per_socket_om_bus_if),
+    `ifdef PERF_ENABLE
+        .perf_om_if (perf_om_if),
+        .perf_ocache (mem_perf_tmp_if.ocache),
+    `endif
+        .ocache_mem_bus_if (l2_mem_bus_if[OCACHE_MEM_L2_IDX]),
+    `endif
+
+        .dcr_bus_if (dcr_bus_if)        
+    );
+    
     VX_mem_bus_if #(
         .DATA_SIZE (`L1_LINE_SIZE),
         .TAG_WIDTH (L1_MEM_ARB_TAG_WIDTH)
     ) per_socket_mem_bus_if[`NUM_SOCKETS]();
+
+    for (genvar i = 0; i < `NUM_SOCKETS; ++i) begin
+        `ASSIGN_VX_MEM_BUS_IF_X (l2_mem_bus_if[L1_MEM_L2_IDX + i], per_socket_mem_bus_if[i], L1X_MEM_TAG_WIDTH, L1_MEM_ARB_TAG_WIDTH);
+    end
 
     `RESET_RELAY (l2_reset, reset);
 
@@ -103,8 +199,8 @@ module VX_cluster import VX_gpu_pkg::*; #(
         .TAG_WIDTH      (L2_TAG_WIDTH),
         .WRITE_ENABLE   (1),
         .UUID_WIDTH     (`UUID_WIDTH),  
-        .CORE_OUT_BUF   (2),
-        .MEM_OUT_BUF    (2),
+        .CORE_OUT_REG   (2),
+        .MEM_OUT_REG    (2),
         .NC_ENABLE      (1),
         .PASSTHRU       (!`L2_ENABLED)
     ) l2cache (
@@ -113,7 +209,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .cache_perf     (mem_perf_tmp_if.l2cache),
     `endif
-        .core_bus_if    (per_socket_mem_bus_if),
+        .core_bus_if    (l2_mem_bus_if),
         .mem_bus_if     (mem_bus_if)
     );
 
@@ -156,6 +252,27 @@ module VX_cluster import VX_gpu_pkg::*; #(
 
             .mem_bus_if     (per_socket_mem_bus_if[i]),
 
+        `ifdef EXT_RASTER_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_raster_if (perf_raster_if[i]),
+        `endif
+            .raster_bus_if  (per_socket_raster_bus_if[i]),
+        `endif
+
+        `ifdef EXT_TEX_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_tex_if    (perf_tex_if[i]),
+        `endif
+            .tex_bus_if     (per_socket_tex_bus_if[i]),
+        `endif
+      
+        `ifdef EXT_OM_ENABLE
+        `ifdef PERF_ENABLE
+            .perf_om_if     (perf_om_if[i]),
+        `endif
+            .om_bus_if      (per_socket_om_bus_if[i]),
+        `endif
+
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_socket_gbar_bus_if[i]),
         `endif
@@ -163,7 +280,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
             .sim_ebreak     (per_socket_sim_ebreak[i]),
             .sim_wb_value   (per_socket_sim_wb_value[i]),
             .busy           (per_socket_busy[i])
-        );
+        );        
     end
 
     `BUFFER_EX(busy, (| per_socket_busy), 1'b1, (`NUM_SOCKETS > 1));
